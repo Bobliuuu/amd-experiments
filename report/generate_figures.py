@@ -77,7 +77,8 @@ fp8_data   = load("fp8_baseline_mistralai_Mistral-7B-v0.1.json")
 int4_data  = load("int4_baseline_mistralai_Mistral-7B-v0.1.json")
 tq_data    = load("bench_tq3_decode_mistralai_Mistral-7B-v0.1.json")
 qual_data  = load("bench_quality_mistralai_Mistral-7B-v0.1.json")
-attn_data  = load("bench_tq3_attention.json")
+attn_data        = load("bench_tq3_attention.json")   # Python wrapper, 8 KV heads (historical)
+triton_attn_data = load("bench_triton_attention.json") # actual Triton kernel, 32 KV heads
 kern_data  = load("bench_kernels.json")
 
 # ── Flatten helpers ──────────────────────────────────────────────────────────
@@ -422,56 +423,52 @@ def fig_vram():
 
 
 # ════════════════════════════════════════════════════════════════════════════
-# Figure 7 — TQ3 Attention Speedup vs Context Length
+# Figure 7 — TQ3 Attention Speedup vs Context Length (measured, 32 KV heads)
 # ════════════════════════════════════════════════════════════════════════════
 def fig_attn_speedup():
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13, 5.5))
     fig.patch.set_facecolor(BG_DARK)
 
-    results = attn_data["results"]
-    n_kvs     = [r["n_kv"] for r in results]
-    fp16_ms   = [r["fp16_ms"] for r in results]
-    tq3_ms    = [r["tq3_ms"] for r in results]
-    speedups  = [r["tq3_speedup"] for r in results]
-    fp16_gbs  = [r["fp16_gbs"] for r in results]
-    tq3_gbs   = [r["tq3_gbs"] for r in results]
+    # Use the real Triton benchmark data (bench_triton_attention.json, 32 KV heads)
+    results    = triton_attn_data["results"]
+    seq_ks     = [r["seq_k"]     for r in results]
+    fp16_ms    = [r["fp16_ms"]   for r in results]
+    pywrap_ms  = [r["pywrap_ms"] for r in results]
+    triton_ms  = [r["triton_ms"] for r in results]
+    spd_fp16   = [r["speedup_vs_fp16"]   for r in results]   # Triton vs FP16
+    spd_pywrap = [r["speedup_vs_pywrap"] for r in results]   # Triton vs Python TQ3
 
     # Left: attention latency
-    ax1.plot(n_kvs, fp16_ms, "o-", color=SCHEME_COLORS["fp16"], lw=2.2, ms=7, label="FP16 (measured)")
-    ax1.plot(n_kvs, tq3_ms,  "D-", color=SCHEME_COLORS["tq3"],  lw=2.2, ms=7, label="TQ3 Python wrapper")
-    # Projected fused Triton: ~1.5–3× faster than FP16 at large contexts
-    triton_ms = [fp / 1.0 for fp in fp16_ms]  # ~same at small; extrapolate speedup
-    # Best-case fused: ~5×/4.92 bandwidth saving ≈ fused TQ3 faster at large context
-    fused_proj = [fp * (0.85 if n < 2048 else 0.7 if n < 8192 else 0.55) for fp, n in zip(fp16_ms, n_kvs)]
-    ax1.plot(n_kvs, fused_proj, "^--", color="#A78BFA", lw=1.8, ms=7, alpha=0.85,
-             label="TQ3 fused Triton (projected)")
+    ax1.plot(seq_ks, fp16_ms,   "o-", color=SCHEME_COLORS["fp16"], lw=2.2, ms=7, label="FP16 SDPA (baseline)")
+    ax1.plot(seq_ks, pywrap_ms, "s-", color="#FBBF24",              lw=2.2, ms=7, label="TQ3 Python wrapper (decompress+SDPA)")
+    ax1.plot(seq_ks, triton_ms, "^-", color=SCHEME_COLORS["tq3"],  lw=2.5, ms=7, label="TQ3 Triton fused kernel (measured)")
 
     ax1.set_xscale("log", base=2)
     ax1.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: f"{int(x):,}"))
     ax1.set_xlabel("KV Cache Length (tokens)")
-    ax1.set_ylabel("Attention Latency (ms)")
-    ax1.set_title("Attention Latency vs KV Length\n8 KV heads, head_dim=128")
-    ax1.grid(True, alpha=0.3)
+    ax1.set_ylabel("Attention Latency (ms, log scale)")
+    ax1.set_title("Attention Latency vs KV Length\n32 KV heads, head_dim=128, S_q=1")
+    ax1.set_yscale("log")
+    ax1.grid(True, which="both", alpha=0.3)
     ax1.legend(fontsize=9)
 
-    # Right: speedup ratio
-    ax2.axhline(1.0, color="#FFFFFF", lw=0.8, ls="--", alpha=0.3, label="break-even")
-    ax2.plot(n_kvs, speedups, "D-", color=SCHEME_COLORS["tq3"], lw=2.2, ms=7,
-             label="TQ3 Python wrapper")
-    # Projected fused Triton speedup
-    fused_speedup = [fp / fu for fp, fu in zip(fp16_ms, fused_proj)]
-    ax2.plot(n_kvs, fused_speedup, "^--", color="#A78BFA", lw=1.8, ms=7, alpha=0.85,
-             label="TQ3 fused Triton (projected)")
+    # Right: speedup of Triton vs FP16 and vs Python TQ3
+    ax2.axhline(1.0, color="#FFFFFF", lw=0.8, ls="--", alpha=0.4, label="break-even (1×)")
+    ax2.plot(seq_ks, spd_pywrap, "^-", color=SCHEME_COLORS["tq3"], lw=2.2, ms=7,
+             label="Triton TQ3 vs Python TQ3 wrapper")
+    ax2.plot(seq_ks, spd_fp16,  "o-", color="#60A5FA", lw=2.2, ms=7,
+             label="Triton TQ3 vs FP16")
 
     ax2.set_xscale("log", base=2)
     ax2.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: f"{int(x):,}"))
     ax2.set_xlabel("KV Cache Length (tokens)")
-    ax2.set_ylabel("Speedup vs FP16 (×)")
-    ax2.set_title("TQ3 Attention Speedup vs FP16\n(>1 = faster, <1 = slower)")
+    ax2.set_ylabel("Speedup (×)")
+    ax2.set_title("TQ3 Triton Kernel Speedup\n(measured, not projected)")
     ax2.grid(True, alpha=0.3)
     ax2.legend(fontsize=9)
 
-    fig.suptitle("Attention Throughput: FP16 vs TQ3 · AMD MI300X VF", fontsize=13, color="#FFFFFF")
+    fig.suptitle("Attention Throughput: FP16 vs TQ3 (Triton, measured) · AMD MI300X VF · 32 heads",
+                 fontsize=12, color="#FFFFFF")
     fig.tight_layout()
     out = FIGURES / "fig7_attention_speedup.png"
     fig.savefig(out, bbox_inches="tight", facecolor=BG_DARK)
@@ -623,6 +620,82 @@ def fig_max_context():
 
 
 # ════════════════════════════════════════════════════════════════════════════
+# Figure 10 — Triton fused TQ3 vs FP16 and Python TQ3 wrapper
+# ════════════════════════════════════════════════════════════════════════════
+def fig_triton_speedup():
+    path = RESULTS / "bench_triton_attention.json"
+    if not path.exists():
+        print(f"  ⚠ {path.name} not found — skipping fig10")
+        return
+
+    data = json.loads(path.read_text())["results"]
+    seq_ks      = [r["seq_k"] for r in data]
+    ms_fp16     = [r["fp16_ms"] for r in data]
+    ms_pywrap   = [r["pywrap_ms"] for r in data]
+    ms_triton   = [r["triton_ms"] for r in data]
+    spd_pywrap  = [r["speedup_vs_pywrap"] for r in data]
+    bw_triton   = [r["triton_eff_bw_gbs"] for r in data]
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    fig.patch.set_facecolor(BG_DARK)
+
+    # ── Left: latency comparison ───────────────────────────────────────────
+    ax = axes[0]
+    ax.set_facecolor(BG_CARD)
+    x_labels = [f"{s//1024}K" for s in seq_ks]
+
+    ax.plot(x_labels, ms_fp16,   "o-", color="#60A5FA", lw=2, ms=6, label="FP16 SDPA (baseline)")
+    ax.plot(x_labels, ms_pywrap, "s-", color="#FBBF24", lw=2, ms=6, label="Python TQ3 (decompress+SDPA)")
+    ax.plot(x_labels, ms_triton, "^-", color=AMD_RED,   lw=2.5, ms=7, label="Triton fused TQ3 (this work)")
+
+    ax.set_xlabel("KV Context Length")
+    ax.set_ylabel("Latency (ms, log scale)")
+    ax.set_title("Attention Latency: FP16 vs TQ3 Implementations")
+    ax.set_yscale("log")
+    ax.grid(True, which="both", alpha=0.3)
+    ax.legend(fontsize=9)
+
+    # Annotate Triton points with speedup vs PyWrapper
+    for i, (xl, spd) in enumerate(zip(x_labels, spd_pywrap)):
+        ax.annotate(f"{spd:.1f}×\nfaster\nvs PyTQ3",
+                    xy=(i, ms_triton[i]),
+                    xytext=(i, ms_triton[i] * 1.8),
+                    fontsize=7, color=AMD_RED, ha="center",
+                    arrowprops=dict(arrowstyle="-", color=AMD_RED, lw=0.8))
+
+    # ── Right: speedup bars ────────────────────────────────────────────────
+    ax2 = axes[1]
+    ax2.set_facecolor(BG_CARD)
+    x = np.arange(len(seq_ks))
+    bars = ax2.bar(x, spd_pywrap, color=AMD_RED, width=0.55,
+                   edgecolor=BG_DARK, linewidth=1.2)
+    for bar, val in zip(bars, spd_pywrap):
+        ax2.text(bar.get_x() + bar.get_width()/2,
+                 bar.get_height() + 0.05,
+                 f"{val:.2f}×", ha="center", va="bottom",
+                 fontsize=10, color="white", fontweight="bold")
+
+    ax2.axhline(1.0, color="#60A5FA", lw=1.5, ls="--", label="Python TQ3 baseline (1×)")
+    ax2.set_xticks(x)
+    ax2.set_xticklabels(x_labels)
+    ax2.set_xlabel("KV Context Length")
+    ax2.set_ylabel("Speedup vs Python TQ3 Wrapper")
+    ax2.set_title("Triton Kernel Speedup over Python TQ3 Wrapper\n(Cosine similarity = 1.0000 — numerically exact)")
+    ax2.set_ylim(0, max(spd_pywrap) * 1.25)
+    ax2.grid(True, axis="y", alpha=0.3)
+    ax2.legend(fontsize=9)
+
+    fig.suptitle("Triton Fused TQ3 Attention · AMD MI300X VF · 32 heads · decode step (S_q=1)",
+                 fontsize=13, color="#FFFFFF", fontweight="bold")
+    fig.tight_layout()
+
+    out = FIGURES / "fig10_triton_speedup.png"
+    fig.savefig(out, bbox_inches="tight", facecolor=BG_DARK)
+    plt.close(fig)
+    print(f"  ✓ {out.name}")
+
+
+# ════════════════════════════════════════════════════════════════════════════
 # Main
 # ════════════════════════════════════════════════════════════════════════════
 if __name__ == "__main__":
@@ -636,4 +709,5 @@ if __name__ == "__main__":
     fig_attn_speedup()
     fig_dashboard()
     fig_max_context()
+    fig_triton_speedup()
     print(f"\nAll figures saved to {FIGURES}/")

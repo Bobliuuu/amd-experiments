@@ -52,10 +52,10 @@ os.environ.setdefault("HIP_FORCE_DEV_KERNARG", "1")
 # Helpers
 # ──────────────────────────────────────────────────────────────────────────────
 
-def make_prompt_ids(tokenizer, seq_len: int) -> torch.Tensor:
+def make_prompt_ids(tokenizer, seq_len: int, batch_size: int = 1) -> torch.Tensor:
     pad_id = tokenizer.eos_token_id or 1
-    ids = torch.full((1, seq_len), pad_id, dtype=torch.long, device="cuda")
-    ids[0, 0] = tokenizer.bos_token_id or 1
+    ids = torch.full((batch_size, seq_len), pad_id, dtype=torch.long, device="cuda")
+    ids[:, 0] = tokenizer.bos_token_id or 1
     return ids
 
 
@@ -138,11 +138,12 @@ def bench_fp16_decode(
     seq_len: int,
     n_decode: int = 30,
     n_runs: int = 3,
+    batch_size: int = 1,
 ) -> Dict:
     model.eval()
     torch.cuda.reset_peak_memory_stats()
 
-    prompt_ids = make_prompt_ids(tokenizer, seq_len)
+    prompt_ids = make_prompt_ids(tokenizer, seq_len, batch_size)
     with torch.no_grad():
         torch.cuda.synchronize()
         t0 = time.perf_counter()
@@ -159,7 +160,11 @@ def bench_fp16_decode(
     times = []
 
     for _ in range(n_runs):
-        next_token = torch.tensor([[tokenizer.eos_token_id or 1]], device="cuda")
+        # Each decode step: (batch_size, 1) next-token tensor
+        next_token = torch.full(
+            (batch_size, 1), tokenizer.eos_token_id or 1,
+            dtype=torch.long, device="cuda"
+        )
         torch.cuda.synchronize()
         t0 = time.perf_counter()
         for _ in range(n_decode):
@@ -171,11 +176,14 @@ def bench_fp16_decode(
         times.append(time.perf_counter() - t0)
 
     elapsed = float(np.median(times))
+    # tokens_per_sec: each decode step produces batch_size tokens
     return {
         "mode":             "fp16",
         "bits":             16,
         "seq_len":          seq_len,
-        "tokens_per_sec":   round(n_decode / elapsed, 2),
+        "batch_size":       batch_size,
+        "tokens_per_sec":   round(n_decode * batch_size / elapsed, 2),
+        "tokens_per_sec_per_seq": round(n_decode / elapsed, 2),
         "latency_ms":       round(elapsed / n_decode * 1000, 3),
         "vram_peak_gb":     round(peak_vram, 2),
         "prefill_ms":       round(prefill_ms, 1),
@@ -197,6 +205,7 @@ def bench_tq_decode(
     bits: int = 3,
     n_decode: int = 30,
     n_runs: int = 3,
+    batch_size: int = 1,
 ) -> Dict:
     """
     Benchmark TQ KV cache decode.
@@ -219,7 +228,7 @@ def bench_tq_decode(
     model.eval()
     torch.cuda.reset_peak_memory_stats()
 
-    prompt_ids = make_prompt_ids(tokenizer, seq_len)
+    prompt_ids = make_prompt_ids(tokenizer, seq_len, batch_size)
     with torch.no_grad():
         torch.cuda.synchronize()
         t0 = time.perf_counter()
@@ -250,7 +259,10 @@ def bench_tq_decode(
     times = []
 
     for _ in range(n_runs):
-        next_token = torch.tensor([[tokenizer.eos_token_id or 1]], device="cuda")
+        next_token = torch.full(
+            (batch_size, 1), tokenizer.eos_token_id or 1,
+            dtype=torch.long, device="cuda"
+        )
         torch.cuda.synchronize()
         t0 = time.perf_counter()
 
@@ -272,7 +284,9 @@ def bench_tq_decode(
         "mode":             tq_name,
         "bits":             bits,
         "seq_len":          seq_len,
-        "tokens_per_sec":   round(n_decode / elapsed, 2),
+        "batch_size":       batch_size,
+        "tokens_per_sec":   round(n_decode * batch_size / elapsed, 2),
+        "tokens_per_sec_per_seq": round(n_decode / elapsed, 2),
         "latency_ms":       round(elapsed / n_decode * 1000, 3),
         "vram_peak_gb":     round(peak_vram, 2),
         "prefill_ms":       round(prefill_ms, 1),
@@ -301,17 +315,22 @@ def main():
                         help="Decode steps per benchmark run")
     parser.add_argument("--n-runs", type=int, default=3,
                         help="Benchmark runs to median over")
+    parser.add_argument("--batch-size", type=int, default=1,
+                        help="Batch size for decode. At batch>=16 KV cache BW becomes the bottleneck"
+                             " where TQ3 compression speedup is most visible.")
     parser.add_argument("--skip-fp16", action="store_true",
                         help="Skip FP16 baseline (if already measured)")
     parser.add_argument("--output", type=str, default=None)
     args = parser.parse_args()
 
     print("=== TQ KV Cache End-to-End Decode Benchmark ===")
-    print(f"Model:    {args.model}")
-    print(f"Device:   {torch.cuda.get_device_name(0)}")
-    print(f"Seq lens: {args.seq_lens}")
-    print(f"TQ bits:  {args.bits}")
-    print(f"Decode:   {args.n_decode} steps × {args.n_runs} runs (median)")
+    print(f"Model:      {args.model}")
+    print(f"Device:     {torch.cuda.get_device_name(0)}")
+    print(f"Batch size: {args.batch_size}  "
+          f"{'(KV-BW-bottleneck regime)' if args.batch_size >= 16 else '(weight-BW-bottleneck regime)'}")
+    print(f"Seq lens:   {args.seq_lens}")
+    print(f"TQ bits:    {args.bits}")
+    print(f"Decode:     {args.n_decode} steps × {args.n_runs} runs (median)")
     print()
 
     from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -336,13 +355,16 @@ def main():
     print()
 
     all_results = {
-        "model":   args.model,
-        "device":  torch.cuda.get_device_name(0),
-        "results": [],
+        "model":      args.model,
+        "device":     torch.cuda.get_device_name(0),
+        "batch_size": args.batch_size,
+        "results":    [],
     }
 
-    header = f"{'seq_len':>8} | {'mode':>6} | {'tok/s':>8} | {'lat_ms':>8} | {'ratio':>7} | {'VRAM_GB':>8}"
-    sep    = "-" * len(header)
+    header = (f"{'seq_len':>8} | {'mode':>6} | {'batch':>5} | "
+              f"{'tok/s':>9} | {'tok/s/seq':>10} | {'lat_ms':>8} | "
+              f"{'ratio':>7} | {'VRAM_GB':>8}")
+    sep = "-" * len(header)
     print(header)
     print(sep)
 
@@ -351,17 +373,21 @@ def main():
         if not args.skip_fp16:
             try:
                 r = bench_fp16_decode(model, tokenizer, seq_len,
-                                      n_decode=args.n_decode, n_runs=args.n_runs)
+                                      n_decode=args.n_decode, n_runs=args.n_runs,
+                                      batch_size=args.batch_size)
                 all_results["results"].append(r)
-                print(f"{seq_len:>8} | {'fp16':>6} | {r['tokens_per_sec']:>8.1f} | "
-                      f"{r['latency_ms']:>8.1f} | {r['compression_ratio']:>7.2f}× | "
+                print(f"{seq_len:>8} | {'fp16':>6} | {args.batch_size:>5} | "
+                      f"{r['tokens_per_sec']:>9.1f} | "
+                      f"{r['tokens_per_sec_per_seq']:>10.1f} | "
+                      f"{r['latency_ms']:>8.1f} | "
+                      f"{r['compression_ratio']:>7.2f}× | "
                       f"{r['vram_peak_gb']:>8.1f}")
             except torch.cuda.OutOfMemoryError:
-                print(f"{seq_len:>8} | {'fp16':>6} |      OOM")
+                print(f"{seq_len:>8} | {'fp16':>6} | {args.batch_size:>5} |      OOM")
                 gc.collect(); torch.cuda.empty_cache()
                 continue
             except Exception as e:
-                print(f"{seq_len:>8} | {'fp16':>6} | ERROR: {e}")
+                print(f"{seq_len:>8} | {'fp16':>6} | {args.batch_size:>5} | ERROR: {e}")
                 gc.collect(); torch.cuda.empty_cache()
                 continue
             finally:
@@ -373,16 +399,20 @@ def main():
             try:
                 r = bench_tq_decode(model, tokenizer, tq, seq_len,
                                     bits=bits,
-                                    n_decode=args.n_decode, n_runs=args.n_runs)
+                                    n_decode=args.n_decode, n_runs=args.n_runs,
+                                    batch_size=args.batch_size)
                 all_results["results"].append(r)
-                print(f"{seq_len:>8} | {r['mode']:>6} | {r['tokens_per_sec']:>8.1f} | "
-                      f"{r['latency_ms']:>8.1f} | {r['compression_ratio']:>7.2f}× | "
+                print(f"{seq_len:>8} | {r['mode']:>6} | {args.batch_size:>5} | "
+                      f"{r['tokens_per_sec']:>9.1f} | "
+                      f"{r['tokens_per_sec_per_seq']:>10.1f} | "
+                      f"{r['latency_ms']:>8.1f} | "
+                      f"{r['compression_ratio']:>7.2f}× | "
                       f"{r['vram_peak_gb']:>8.1f}")
             except torch.cuda.OutOfMemoryError:
-                print(f"{seq_len:>8} | {f'tq{bits}':>6} |      OOM")
+                print(f"{seq_len:>8} | {f'tq{bits}':>6} | {args.batch_size:>5} |      OOM")
                 break
             except Exception as e:
-                print(f"{seq_len:>8} | {f'tq{bits}':>6} | ERROR: {e}")
+                print(f"{seq_len:>8} | {f'tq{bits}':>6} | {args.batch_size:>5} | ERROR: {e}")
             finally:
                 gc.collect(); torch.cuda.empty_cache()
 
@@ -393,19 +423,21 @@ def main():
     tq3_rows  = [r for r in all_results["results"] if r["mode"] == "tq3"]
     if fp16_rows and tq3_rows:
         print()
-        print("── KV Compression Summary ──")
+        print(f"── KV Compression Summary (batch={args.batch_size}) ──")
         for tq_r in tq3_rows:
             fp16_r = next((r for r in fp16_rows if r["seq_len"] == tq_r["seq_len"]), None)
             if fp16_r:
-                speedup = tq_r["tokens_per_sec"] / fp16_r["tokens_per_sec"]
+                # Compare per-sequence throughput to isolate compression effect
+                speedup = tq_r["tokens_per_sec_per_seq"] / fp16_r["tokens_per_sec_per_seq"]
                 kv_savings_pct = (1 - 1 / tq_r["compression_ratio"]) * 100
                 print(f"  seq={tq_r['seq_len']:>7}  ratio={tq_r['compression_ratio']:.2f}×  "
                       f"KV_savings={kv_savings_pct:.0f}%  "
-                      f"tok/s ratio={speedup:.2f}×")
+                      f"tok/s speedup={speedup:.2f}×")
 
-    # Save
+    # Save (include batch size in filename when non-default)
     model_slug = args.model.replace("/", "_")
-    output_path = args.output or (RESULTS_DIR / f"bench_tq3_decode_{model_slug}.json")
+    batch_tag = f"_b{args.batch_size}" if args.batch_size != 1 else ""
+    output_path = args.output or (RESULTS_DIR / f"bench_tq3_decode{batch_tag}_{model_slug}.json")
     with open(output_path, "w") as f:
         json.dump(all_results, f, indent=2)
     print(f"\nResults saved: {output_path}")

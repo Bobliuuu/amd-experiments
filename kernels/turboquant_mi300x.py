@@ -37,6 +37,21 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
+# ── MFMA rotation kernel (optional, falls back to torch.matmul if unavailable)
+# Dict keyed by (device_ptr, device_index) so one loader per unique rotation tensor.
+_mfma_cache: dict = {}
+
+def _get_mfma(rotation: torch.Tensor):
+    """Return a cached MFMARotate for this rotation tensor (lazy init, one per ptr)."""
+    key = (rotation.data_ptr(), rotation.device.index)
+    if key not in _mfma_cache:
+        try:
+            from tq_mfma_loader import MFMARotate
+            _mfma_cache[key] = MFMARotate(rotation)
+        except Exception:
+            _mfma_cache[key] = None
+    return _mfma_cache[key]
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Configuration
 # ──────────────────────────────────────────────────────────────────────────────
@@ -220,9 +235,13 @@ def tq3_compress(
     safe_norm = norm.clamp(min=1e-15)
     x_unit = x / safe_norm.unsqueeze(-1)
 
-    # Rotate: y = x_unit @ Π^T  (each row of x_unit dot each row of rotation)
-    # rotation[i, :] is the i-th basis vector; y[:, i] = x_unit dot rotation[i]
-    y = x_unit @ rotation.T                      # (n, 128) — torch.matmul → MFMA
+    # Rotate: y = x_unit @ Π^T
+    # Try direct MFMA kernel; fall back to torch.matmul (rocBLAS → MFMA) if unavailable.
+    mfma = _get_mfma(rotation)
+    if mfma is not None and mfma.available:
+        y = mfma.forward(x_unit)                # direct mfma_f32_16x16x16f16
+    else:
+        y = x_unit @ rotation.T                 # torch.matmul → rocBLAS → MFMA
 
     # Quantize: find nearest centroid per element
     indices = _nearest_centroid(y, codebook)     # (n, 128) int32
@@ -272,7 +291,11 @@ def tq3_decompress(
 
     # Inverse rotation: x_hat_unit = y_hat @ Π (since Π is orthogonal: Π^{-1} = Π^T)
     # y_hat = x_unit @ Π^T  ⟹  x_unit = y_hat @ Π
-    x_hat_unit = y_hat @ rotation                          # (n, 128) — MFMA
+    mfma = _get_mfma(rotation)
+    if mfma is not None and mfma.available:
+        x_hat_unit = mfma.inverse(y_hat)              # direct mfma_f32_16x16x16f16
+    else:
+        x_hat_unit = y_hat @ rotation                 # torch.matmul → rocBLAS → MFMA
 
     # Scale by norm
     x_hat = x_hat_unit * norm.unsqueeze(-1)               # (n, 128)
@@ -424,7 +447,11 @@ class TurboQuantMI300X:
         orig_shape = q.shape
         n = q.numel() // self.head_dim
         q_2d = q.reshape(n, self.head_dim).float()
-        q_rot = q_2d @ self.rotation.T
+        mfma = _get_mfma(self.rotation)
+        if mfma is not None and mfma.available:
+            q_rot = mfma.forward(q_2d)
+        else:
+            q_rot = q_2d @ self.rotation.T
         return q_rot.view(*orig_shape)
 
     # ── Stats ────────────────────────────────────────────────────────────────

@@ -34,9 +34,11 @@ if _hf_token := os.environ.get("HF_TOKEN"):
     from huggingface_hub import login
     login(token=_hf_token, add_to_git_credential=False)
 
-KERNELS_DIR = Path(__file__).parent.parent / "kernels"
-RESULTS_DIR = Path(__file__).parent.parent / "results"
+KERNELS_DIR  = Path(__file__).parent.parent / "kernels"
+BASELINES_DIR = Path(__file__).parent.parent / "baselines"
+RESULTS_DIR  = Path(__file__).parent.parent / "results"
 sys.path.insert(0, str(KERNELS_DIR))
+sys.path.insert(0, str(BASELINES_DIR))
 RESULTS_DIR.mkdir(exist_ok=True)
 
 
@@ -79,12 +81,15 @@ class KVQuantWrapper:
             from turboquant_mi300x import TurboQuantMI300X
             self.tq = TurboQuantMI300X(bits=bits, rotation_seed=42)
         elif kv_config == "fp8":
-            sys.path.insert(0, str(Path(__file__).parent.parent / "baselines"))
             from fp8_baseline import quantize_kv_fp8, dequantize_kv_fp8, FP8_DTYPE
+            if FP8_DTYPE is None:
+                raise ImportError(
+                    "torch.float8_e4m3fnuz is unavailable on this platform. "
+                    "FP8 KV cache requires PyTorch >= 2.1 with ROCm."
+                )
             self.quantize_fp8 = quantize_kv_fp8
             self.dequantize_fp8 = dequantize_kv_fp8
         elif kv_config == "int4":
-            sys.path.insert(0, str(Path(__file__).parent.parent / "baselines"))
             from int4_baseline import quantize_kv_int4, dequantize_kv_int4
             self.quantize_int4 = quantize_kv_int4
             self.dequantize_int4 = dequantize_kv_int4
@@ -190,12 +195,8 @@ def evaluate_kv_quality(model, tokenizer, seq_len: int = 512) -> Dict:
     """
     from turboquant_mi300x import TurboQuantMI300X
 
-    # FP8 helpers
-    try:
-        from baselines.fp8_baseline import quantize_kv_fp8, dequantize_kv_fp8
-    except ImportError:
-        sys.path.insert(0, str(Path(__file__).parent.parent / "baselines"))
-        from fp8_baseline import quantize_kv_fp8, dequantize_kv_fp8
+    # FP8 helpers (BASELINES_DIR already in sys.path from module level)
+    from fp8_baseline import quantize_kv_fp8, dequantize_kv_fp8, FP8_DTYPE
 
     tq3 = TurboQuantMI300X(bits=3, rotation_seed=42)
     tq4 = TurboQuantMI300X(bits=4, rotation_seed=42)
@@ -207,16 +208,25 @@ def evaluate_kv_quality(model, tokenizer, seq_len: int = 512) -> Dict:
     with torch.no_grad():
         out = model(ids, use_cache=True)
 
-    results = {}
-    for scheme_name, quantize_fn in [
-        ("fp8",  lambda k, v: (lambda blk: (blk[0].float()/blk[1], blk[2].float()/blk[3]))
-                               (quantize_kv_fp8((k, v)))),
+    # Build scheme list; only include FP8 when the dtype is available on this platform.
+    schemes = []
+    if FP8_DTYPE is not None:
+        schemes.append(
+            ("fp8", lambda k, v: (lambda blk: (blk[0].float() / blk[1], blk[2].float() / blk[3]))
+                                  (quantize_kv_fp8((k, v))))
+        )
+    else:
+        print("  fp8: skipped (torch.float8_e4m3fnuz unavailable on this platform)")
+    schemes += [
         ("int4", None),  # handled separately
         ("tq3",  lambda k, v: (tq3.decompress_tensor(tq3.compress_tensor(k.reshape(-1, 128).float()), k.shape).to(k.dtype),
                                tq3.decompress_tensor(tq3.compress_tensor(v.reshape(-1, 128).float()), v.shape).to(v.dtype))),
         ("tq4",  lambda k, v: (tq4.decompress_tensor(tq4.compress_tensor(k.reshape(-1, 128).float()), k.shape).to(k.dtype),
                                tq4.decompress_tensor(tq4.compress_tensor(v.reshape(-1, 128).float()), v.shape).to(v.dtype))),
-    ]:
+    ]
+
+    results = {}
+    for scheme_name, quantize_fn in schemes:
         if quantize_fn is None:
             continue  # skip INT4 here (handled via KVQuantWrapper in ppl)
         cos_sims, mses = [], []
