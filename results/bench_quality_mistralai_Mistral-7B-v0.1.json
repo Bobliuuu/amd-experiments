@@ -1,0 +1,46 @@
+{
+  "model": "mistralai/Mistral-7B-v0.1",
+  "device": "AMD Instinct MI300X VF",
+  "perplexity": {
+    "fp16": {
+      "perplexity": 1.086,
+      "nll_mean": 0.0823,
+      "n_windows": 1
+    },
+    "fp8": {
+      "error": "No module named 'fp8_baseline'"
+    },
+    "int4": {
+      "perplexity": 1.086,
+      "nll_mean": 0.0823,
+      "n_windows": 1
+    },
+    "tq3": {
+      "perplexity": 1.086,
+      "nll_mean": 0.0823,
+      "n_windows": 1
+    },
+    "tq4": {
+      "perplexity": 1.086,
+      "nll_mean": 0.0823,
+      "n_windows": 1
+    }
+  },
+  "kv_reconstruction": {
+    "fp8": {
+      "mean_cosine_sim": NaN,
+      "mean_mse": NaN,
+      "n_layers_heads": 32
+    },
+    "tq3": {
+      "mean_cosine_sim": 0.9831,
+      "mean_mse": 0.035454,
+      "n_layers_heads": 32
+    },
+    "tq4": {
+      "mean_cosine_sim": 0.9954,
+      "mean_mse": 0.009744,
+      "n_layers_heads": 32
+    }
+  }
+}

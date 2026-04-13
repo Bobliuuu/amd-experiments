@@ -1,0 +1,71 @@
+{
+  "model": "mistralai/Mistral-7B-v0.1",
+  "device": {
+    "name": "AMD Instinct MI300X VF",
+    "total_gb": 205.8,
+    "free_gb": 190.8
+  },
+  "kv_config": "fp16",
+  "benchmarks": [
+    {
+      "tokens_per_sec": 43.82,
+      "latency_ms": 22.821,
+      "vram_peak_gb": 14.72,
+      "prefill_ms": 10965.2,
+      "seq_len": 512,
+      "n_decode": 30,
+      "kv_dtype": "torch.float16",
+      "n_runs": 3
+    },
+    {
+      "tokens_per_sec": 43.49,
+      "latency_ms": 22.996,
+      "vram_peak_gb": 16.73,
+      "prefill_ms": 176.8,
+      "seq_len": 2048,
+      "n_decode": 30,
+      "kv_dtype": "torch.float16",
+      "n_runs": 3
+    },
+    {
+      "tokens_per_sec": 46.5,
+      "latency_ms": 21.507,
+      "vram_peak_gb": 16.6,
+      "prefill_ms": 424.9,
+      "seq_len": 8192,
+      "n_decode": 30,
+      "kv_dtype": "torch.float16",
+      "n_runs": 3
+    },
+    {
+      "tokens_per_sec": 46.41,
+      "latency_ms": 21.545,
+      "vram_peak_gb": 24.7,
+      "prefill_ms": 3549.8,
+      "seq_len": 32768,
+      "n_decode": 30,
+      "kv_dtype": "torch.float16",
+      "n_runs": 3
+    },
+    {
+      "tokens_per_sec": 46.41,
+      "latency_ms": 21.545,
+      "vram_peak_gb": 43.51,
+      "prefill_ms": 12713.7,
+      "seq_len": 65536,
+      "n_decode": 30,
+      "kv_dtype": "torch.float16",
+      "n_runs": 3
+    },
+    {
+      "tokens_per_sec": 46.39,
+      "latency_ms": 21.556,
+      "vram_peak_gb": 106.89,
+      "prefill_ms": 46840.6,
+      "seq_len": 131072,
+      "n_decode": 30,
+      "kv_dtype": "torch.float16",
+      "n_runs": 3
+    }
+  ]
+}

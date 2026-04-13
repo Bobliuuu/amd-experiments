@@ -1,0 +1,74 @@
+{
+  "device": "AMD Instinct MI300X VF",
+  "n_kv_heads": 8,
+  "head_dim": 128,
+  "tq_bits": 3,
+  "results": [
+    {
+      "n_kv": 512,
+      "head_dim": 128,
+      "n_kv_heads": 8,
+      "fp16_ms": 0.048,
+      "fp16_gbs": 43.7,
+      "tq3_ms": 0.653,
+      "tq3_gbs": 0.7,
+      "tq3_speedup": 0.07,
+      "tq3_compression": 4.92
+    },
+    {
+      "n_kv": 2048,
+      "head_dim": 128,
+      "n_kv_heads": 8,
+      "fp16_ms": 0.112,
+      "fp16_gbs": 74.7,
+      "tq3_ms": 0.711,
+      "tq3_gbs": 2.4,
+      "tq3_speedup": 0.16,
+      "tq3_compression": 4.92
+    },
+    {
+      "n_kv": 8192,
+      "head_dim": 128,
+      "n_kv_heads": 8,
+      "fp16_ms": 0.376,
+      "fp16_gbs": 89.3,
+      "tq3_ms": 1.259,
+      "tq3_gbs": 5.4,
+      "tq3_speedup": 0.3,
+      "tq3_compression": 4.92
+    },
+    {
+      "n_kv": 32768,
+      "head_dim": 128,
+      "n_kv_heads": 8,
+      "fp16_ms": 1.46,
+      "fp16_gbs": 91.9,
+      "tq3_ms": 3.905,
+      "tq3_gbs": 7.0,
+      "tq3_speedup": 0.37,
+      "tq3_compression": 4.92
+    },
+    {
+      "n_kv": 65536,
+      "head_dim": 128,
+      "n_kv_heads": 8,
+      "fp16_ms": 2.893,
+      "fp16_gbs": 92.8,
+      "tq3_ms": 8.092,
+      "tq3_gbs": 6.7,
+      "tq3_speedup": 0.36,
+      "tq3_compression": 4.92
+    },
+    {
+      "n_kv": 131072,
+      "head_dim": 128,
+      "n_kv_heads": 8,
+      "fp16_ms": 6.099,
+      "fp16_gbs": 88.0,
+      "tq3_ms": 15.677,
+      "tq3_gbs": 7.0,
+      "tq3_speedup": 0.39,
+      "tq3_compression": 4.92
+    }
+  ]
+}

@@ -1,0 +1,63 @@
+{
+  "device": "AMD Instinct MI300X VF",
+  "n_vectors": 65536,
+  "head_dim": 128,
+  "python_wrapper": {
+    "compress": {
+      "op": "tq3_compress",
+      "n_vectors": 65536,
+      "median_us": 3121.65,
+      "throughput_gbs": 11.8,
+      "vectors_per_us": 20.99,
+      "note": "rotation (GEMM\u2192MFMA) + centroid lookup + bitpack"
+    },
+    "decompress": {
+      "op": "tq3_decompress",
+      "n_vectors": 65536,
+      "median_us": 632.55,
+      "throughput_gbs": 58.4,
+      "vectors_per_us": 103.61,
+      "note": "bitunpack + centroid lookup + inverse rotation (GEMM\u2192MFMA)"
+    },
+    "fused_dot": {
+      "op": "tq3_fused_dot",
+      "n_queries": 64,
+      "n_kv": 65536,
+      "median_us": 609.95,
+      "throughput_gbs": 33.1,
+      "note": "bitunpack + centroid lookup + dot product (GEMM\u2192MFMA)"
+    },
+    "fp16_matmul": {
+      "op": "fp16_matmul (reference)",
+      "n_queries": 64,
+      "n_kv": 65536,
+      "median_us": 32.8,
+      "throughput_gbs": 767.7
+    }
+  },
+  "standalone_binary": {
+    "binary_results": {
+      "Memory": {
+        "throughput_gbs": 5300.0,
+        "source": "standalone_binary"
+      },
+      "For": {
+        "throughput_gbs": 5300.0,
+        "source": "standalone_binary"
+      }
+    },
+    "raw_output": "=== TurboQuant MI300X Kernel Benchmark ===\nGPU: AMD Instinct MI300X VF | warpSize=64\nn_vectors=65536  n_warmup=50  n_iters=50\n\nInput:   33.6 MB (float32, 65536 vectors \u00d7 128 dim)\nTQ3 out: 3.4 MB (9.8\u00d7 compression)\nTQ4 out: 4.5 MB (7.5\u00d7 compression)\n\nKernel                             | n        | min_ms         | avg_ms         | BW_in (GB/s)       | BW_out (GB/s)\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n  TQ3 quantize (compress)          | n= 65536 | min=3.155 ms | avg=3.193 ms | BW_in=10.6 GB/s | BW_out=1.1 GB/s\n  TQ3 dequantize (decompress)      | n= 65536 | min=0.169 ms | avg=0.177 ms | BW_in=20.1 GB/s | BW_out=198.1 GB/s\n  TQ4 quantize (compress)          | n= 65536 | min=3.160 ms | avg=3.206 ms | BW_in=10.6 GB/s | BW_out=1.4 GB/s\n  TQ4 dequantize (decompress)      | n= 65536 | min=0.172 ms | avg=0.180 ms | BW_in=25.9 GB/s | BW_out=194.7 GB/s\n  TQ3 fused dot (1 query)          | n= 65536 | min=0.037 ms | avg=0.038 ms | BW_in=93.1 GB/s | BW_out=7.2 GB/s\n\n=== Theoretical MI300X limits ===\n  Memory bandwidth: 5300 GB/s\n  For TQ3 compress  (FP32 in = 33.6 MB): theoretical 5300 GB/s bounded = 0.006 ms min\n  For TQ3 decompress (TQ3 in = 3.4 MB): theoretical 5300 GB/s bounded = 0.0006 ms min\n"
+  },
+  "memory_analysis": {
+    "n_vectors": 65536,
+    "fp16_bytes": 16777216,
+    "fp8_bytes": 8388608,
+    "int4_bytes": 4194304,
+    "tq3_bytes": 3407872,
+    "tq4_bytes": 4456448,
+    "fp8_ratio": 2.0,
+    "int4_ratio": 4.0,
+    "tq3_ratio": 4.92,
+    "tq4_ratio": 3.76
+  }
+}

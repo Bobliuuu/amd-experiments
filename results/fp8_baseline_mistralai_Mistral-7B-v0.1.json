@@ -1,0 +1,42 @@
+{
+  "model": "mistralai/Mistral-7B-v0.1",
+  "device": {
+    "name": "AMD Instinct MI300X VF"
+  },
+  "kv_config": "fp8_e4m3fnuz",
+  "benchmarks": [
+    {
+      "tokens_per_sec": 35.94,
+      "latency_ms": 27.822,
+      "vram_peak_gb": 14.72,
+      "prefill_ms": 10820.2,
+      "seq_len": 512,
+      "n_decode": 20,
+      "kv_dtype": "fp8_e4m3fnuz",
+      "compression_ratio": 2.0,
+      "n_runs": 2
+    },
+    {
+      "tokens_per_sec": 35.49,
+      "latency_ms": 28.175,
+      "vram_peak_gb": 16.73,
+      "prefill_ms": 175.7,
+      "seq_len": 2048,
+      "n_decode": 20,
+      "kv_dtype": "fp8_e4m3fnuz",
+      "compression_ratio": 2.0,
+      "n_runs": 2
+    },
+    {
+      "tokens_per_sec": 28.91,
+      "latency_ms": 34.594,
+      "vram_peak_gb": 16.6,
+      "prefill_ms": 410.6,
+      "seq_len": 8192,
+      "n_decode": 20,
+      "kv_dtype": "fp8_e4m3fnuz",
+      "compression_ratio": 2.0,
+      "n_runs": 2
+    }
+  ]
+}
