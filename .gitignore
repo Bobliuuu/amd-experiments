@@ -16,3 +16,4 @@ venv/
 .idea/
 
 .venv-vllm
+.venv-vllm-rocm

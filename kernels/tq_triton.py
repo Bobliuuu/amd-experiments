@@ -341,18 +341,24 @@ def _tq3v3_attention_kernel(
     """
     v3: fused TQ3 dequantize + Flash-Attention-2 attention.
 
-    Key change vs v2: compact plane loads reduce VMEM issue pressure 8×.
+    Key change vs v2: compact plane loads — [BLOCK_N, 16] bytes per plane instead
+    of [BLOCK_N, 128] — reduce VMEM instruction count 8× (768 → 96 per KV block).
+    Expansion to [BLOCK_N, 128] is done in registers via 3D tl.reshape+bitshift.
 
-    v2 issued 384 VMEM instructions per KV block (128/plane × 3 planes × K)
-    plus another 384 for V = 768 total.  Each instruction takes 4 cycles to
-    issue on CDNA3, so load issue alone consumed ~3072 cycles/block even though
-    L1 served 7/8 of the accesses from cache (HBM traffic was already minimal).
+    Measured result on gfx942 (batch=1, H=8 KV heads, seq_k=65536):
+      v2: 8.23 ms   v3: 9.06 ms  (v3 is ~10% slower)
 
-    v3 loads [BLOCK_N, 16] bytes per plane (the 16 unique bytes), then expands
-    to [BLOCK_N, 128] entirely in registers using 3D reshape+bitshift.  VMEM
-    issue drops to 48 instructions per KV block (K+V combined: 96), freeing the
-    issue pipeline for MFMA overlap.  The bit-expand adds 3 × BLOCK_N pure-VALU
-    shift+AND operations per plane — negligible vs the MFMA compute.
+    The VMEM savings are real and the bit ordering is verified correct, but they
+    don't help because the real bottleneck is grid parallelism: with batch=1 the
+    kernel launches only 8 wavefronts (= 0.7% of 1216 SIMD units on MI300X).
+    The sequential KV loop of 1024 iterations per wavefront dominates, and the
+    3D reshape VALU overhead outweighs the latency reduction from fewer VMEM
+    instructions on so few active wavefronts.
+
+    The pattern IS useful as a reference and for larger batch sizes where VMEM
+    instruction throughput becomes the binding constraint.  The true fix for
+    batch=1 decode is sequence-parallel (Split-K) attention: exposing S_k in the
+    grid to saturate all 304 CUs — see summary.md for the proposed v4 design.
 
     Requires Triton ≥ 3.1 (for tl.reshape on 3D shapes and element-wise 3D ops).
     """
@@ -613,6 +619,228 @@ def _tq3_nibble_attention_kernel(
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Split-K (sequence-parallel) kernels for decode-heavy workloads
+# ──────────────────────────────────────────────────────────────────────────────
+
+@triton.jit
+def _tq3_splitk_partial_kernel(
+    Q_ptr, stride_qb, stride_qh, stride_qm, stride_qd,
+    K_planes_ptr, stride_kb, stride_kh, stride_kn,
+    K_norms_ptr, stride_knb, stride_knh, stride_knn,
+    V_planes_ptr, stride_vb, stride_vh, stride_vn,
+    V_norms_ptr, stride_vnb, stride_vnh, stride_vnn,
+    Partial_m_ptr, stride_pmb, stride_pmh, stride_pmm, stride_pms,
+    Partial_l_ptr, stride_plb, stride_plh, stride_plm, stride_pls,
+    Partial_acc_ptr, stride_pab, stride_pah, stride_pam, stride_pas, stride_pae, stride_pad,
+    batch: int, heads: int, seq_q: int, seq_k: int,
+    head_dim: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+    sm_scale: float,
+):
+    """
+    One program computes a single (query-block, batch-head, split) partial result.
+    Grid: (ceil(S_q/BLOCK_M), B*H, ceil(S_k/BLOCK_N)).
+    """
+    pid_m = tl.program_id(0)
+    pid_bh = tl.program_id(1)
+    pid_split = tl.program_id(2)
+
+    batch_idx = pid_bh // heads
+    head_idx = pid_bh % heads
+
+    q_off = (batch_idx * stride_qb + head_idx * stride_qh + pid_m * BLOCK_M * stride_qm)
+    q_ptrs = (
+        Q_ptr
+        + q_off
+        + tl.arange(0, BLOCK_M)[:, None] * stride_qm
+        + tl.arange(0, head_dim)[None, :] * stride_qd
+    )
+    m_mask = (pid_m * BLOCK_M + tl.arange(0, BLOCK_M)) < seq_q
+    q = tl.load(q_ptrs, mask=m_mask[:, None], other=0.0).to(tl.float16)
+
+    m_i = tl.full([BLOCK_M], -float("inf"), dtype=tl.float32)
+    l_i = tl.zeros([BLOCK_M], dtype=tl.float32)
+    acc = tl.zeros([BLOCK_M, head_dim], dtype=tl.float32)
+
+    k_base = batch_idx * stride_kb + head_idx * stride_kh
+    kn_base = batch_idx * stride_knb + head_idx * stride_knh
+    v_base = batch_idx * stride_vb + head_idx * stride_vh
+    vn_base = batch_idx * stride_vnb + head_idx * stride_vnh
+
+    n_range = tl.arange(0, BLOCK_N)
+    d_range = tl.arange(0, head_dim)
+    byte_in_plane = d_range // 8
+    bit_in_byte = d_range % 8
+
+    block_n_start = pid_split * BLOCK_N
+    n_mask = (block_n_start + n_range) < seq_k
+    n_mask_2d = n_mask[:, None]
+
+    k_block_base = K_planes_ptr + k_base + block_n_start * stride_kn
+    k_byte_ptrs = (
+        k_block_base
+        + n_range[:, None] * stride_kn
+        + byte_in_plane[None, :]
+    )
+    b0k_raw = tl.load(k_byte_ptrs, mask=n_mask_2d, other=0).to(tl.int32)
+    b1k_raw = tl.load(k_byte_ptrs + 16, mask=n_mask_2d, other=0).to(tl.int32)
+    b2k_raw = tl.load(k_byte_ptrs + 32, mask=n_mask_2d, other=0).to(tl.int32)
+
+    bit_shift = bit_in_byte[None, :]
+    b0k = (b0k_raw >> bit_shift) & 1
+    b1k = (b1k_raw >> bit_shift) & 1
+    b2k = (b2k_raw >> bit_shift) & 1
+    k_centroids = _bits_to_centroid(b0k, b1k, b2k)
+
+    raw_scores = tl.dot(q, k_centroids.to(tl.float16).T, out_dtype=tl.float32)
+    k_norms_block = tl.load(
+        K_norms_ptr + kn_base + (block_n_start + n_range) * stride_knn,
+        mask=n_mask,
+        other=0.0,
+    )
+    scores = raw_scores * (k_norms_block * sm_scale)[None, :]
+    scores = tl.where(n_mask[None, :], scores, -1e9)
+
+    m_ij = tl.max(scores, axis=1)
+    m_new = tl.maximum(m_i, m_ij)
+    alpha = tl.exp(m_i - m_new)
+    p = tl.exp(scores - m_new[:, None])
+    l_i = l_i * alpha + tl.sum(p, axis=1)
+    m_i = m_new
+
+    v_block_base = V_planes_ptr + v_base + block_n_start * stride_vn
+    v_byte_ptrs = (
+        v_block_base
+        + n_range[:, None] * stride_vn
+        + byte_in_plane[None, :]
+    )
+    b0v_raw = tl.load(v_byte_ptrs, mask=n_mask_2d, other=0).to(tl.int32)
+    b1v_raw = tl.load(v_byte_ptrs + 16, mask=n_mask_2d, other=0).to(tl.int32)
+    b2v_raw = tl.load(v_byte_ptrs + 32, mask=n_mask_2d, other=0).to(tl.int32)
+    b0v = (b0v_raw >> bit_shift) & 1
+    b1v = (b1v_raw >> bit_shift) & 1
+    b2v = (b2v_raw >> bit_shift) & 1
+    v_centroids = _bits_to_centroid(b0v, b1v, b2v)
+
+    v_norms_block = tl.load(
+        V_norms_ptr + vn_base + (block_n_start + n_range) * stride_vnn,
+        mask=n_mask,
+        other=0.0,
+    )
+    p_scaled = p * v_norms_block[None, :]
+    acc = acc * alpha[:, None] + tl.dot(
+        p_scaled.to(tl.float16), v_centroids.to(tl.float16), out_dtype=tl.float32
+    )
+
+    m_ptr = (
+        Partial_m_ptr
+        + batch_idx * stride_pmb
+        + head_idx * stride_pmh
+        + pid_m * stride_pmm
+        + pid_split * stride_pms
+    )
+    l_ptr = (
+        Partial_l_ptr
+        + batch_idx * stride_plb
+        + head_idx * stride_plh
+        + pid_m * stride_plm
+        + pid_split * stride_pls
+    )
+    tl.store(m_ptr + tl.arange(0, BLOCK_M), m_i, mask=m_mask)
+    tl.store(l_ptr + tl.arange(0, BLOCK_M), l_i, mask=m_mask)
+
+    acc_ptrs = (
+        Partial_acc_ptr
+        + batch_idx * stride_pab
+        + head_idx * stride_pah
+        + pid_m * stride_pam
+        + pid_split * stride_pas
+        + tl.arange(0, BLOCK_M)[:, None] * stride_pae
+        + tl.arange(0, head_dim)[None, :] * stride_pad
+    )
+    tl.store(acc_ptrs, acc, mask=m_mask[:, None])
+
+
+@triton.jit
+def _tq3_splitk_reduce_kernel(
+    Partial_m_ptr, stride_pmb, stride_pmh, stride_pmm, stride_pms, stride_pme,
+    Partial_l_ptr, stride_plb, stride_plh, stride_plm, stride_pls, stride_ple,
+    Partial_acc_ptr, stride_pab, stride_pah, stride_pam, stride_pas, stride_pae, stride_pad,
+    O_ptr, stride_ob, stride_oh, stride_om, stride_od,
+    heads: int, seq_q: int, n_splits: int,
+    head_dim: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+):
+    """
+    Merge split partials using log-sum-exp algebra:
+      m = max_s m_s
+      l = sum_s exp(m_s - m) * l_s
+      acc = sum_s exp(m_s - m) * acc_s
+      out = acc / l
+    Grid: (ceil(S_q/BLOCK_M), B*H)
+    """
+    pid_m = tl.program_id(0)
+    pid_bh = tl.program_id(1)
+    batch_idx = pid_bh // heads
+    head_idx = pid_bh % heads
+
+    m_mask = (pid_m * BLOCK_M + tl.arange(0, BLOCK_M)) < seq_q
+
+    m_max = tl.full([BLOCK_M], -float("inf"), dtype=tl.float32)
+    l_sum = tl.zeros([BLOCK_M], dtype=tl.float32)
+    acc_sum = tl.zeros([BLOCK_M, head_dim], dtype=tl.float32)
+
+    for s in range(0, n_splits):
+        m_ptr = (
+            Partial_m_ptr
+            + batch_idx * stride_pmb
+            + head_idx * stride_pmh
+            + pid_m * stride_pmm
+            + s * stride_pms
+        )
+        l_ptr = (
+            Partial_l_ptr
+            + batch_idx * stride_plb
+            + head_idx * stride_plh
+            + pid_m * stride_plm
+            + s * stride_pls
+        )
+        m_s = tl.load(m_ptr + tl.arange(0, BLOCK_M) * stride_pme, mask=m_mask, other=-float("inf"))
+        l_s = tl.load(l_ptr + tl.arange(0, BLOCK_M) * stride_ple, mask=m_mask, other=0.0)
+
+        acc_ptrs = (
+            Partial_acc_ptr
+            + batch_idx * stride_pab
+            + head_idx * stride_pah
+            + pid_m * stride_pam
+            + s * stride_pas
+            + tl.arange(0, BLOCK_M)[:, None] * stride_pae
+            + tl.arange(0, head_dim)[None, :] * stride_pad
+        )
+        acc_s = tl.load(acc_ptrs, mask=m_mask[:, None], other=0.0)
+
+        m_new = tl.maximum(m_max, m_s)
+        a = tl.exp(m_max - m_new)
+        b = tl.exp(m_s - m_new)
+        l_sum = l_sum * a + l_s * b
+        acc_sum = acc_sum * a[:, None] + acc_s * b[:, None]
+        m_max = m_new
+
+    l_safe = tl.where(l_sum > 0, l_sum, 1.0)
+    out = acc_sum / l_safe[:, None]
+
+    out_off = batch_idx * stride_ob + head_idx * stride_oh + pid_m * BLOCK_M * stride_om
+    out_ptrs = (
+        O_ptr
+        + out_off
+        + tl.arange(0, BLOCK_M)[:, None] * stride_om
+        + tl.arange(0, head_dim)[None, :] * stride_od
+    )
+    tl.store(out_ptrs, out.to(tl.float16), mask=m_mask[:, None])
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Python entry points
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -626,6 +854,7 @@ def turboquant_attention_fwd(
     sm_scale: Optional[float] = None,
     BLOCK_M: Optional[int] = None,
     BLOCK_N: Optional[int] = None,
+    use_split_k: bool = True,
 ) -> torch.Tensor:
     """
     Fused TQ3 dequantize + attention forward pass (bit-plane format, 52 B/token).
@@ -643,6 +872,7 @@ def turboquant_attention_fwd(
                If None, output stays in the rotated space (slightly faster).
     sm_scale : float — softmax scale, defaults to 1/sqrt(D)
     BLOCK_M, BLOCK_N : int — override autotuned block sizes (for testing only)
+    use_split_k : bool — enable Split-K path for decode-heavy shapes
 
     Returns
     -------
@@ -668,7 +898,48 @@ def turboquant_attention_fwd(
 
     out = torch.empty(B, H, S_q, D, dtype=torch.float16, device=q.device)
 
-    if BLOCK_M is not None and BLOCK_N is not None:
+    use_splitk_path = use_split_k and S_q <= 16 and S_k >= 4096
+
+    if use_splitk_path:
+        split_block_n = BLOCK_N if BLOCK_N is not None else 64
+        split_block_m = BLOCK_M if BLOCK_M is not None else 16
+        n_splits = triton.cdiv(S_k, split_block_n)
+
+        partial_m = torch.empty((B, H, triton.cdiv(S_q, split_block_m), n_splits, split_block_m),
+                                dtype=torch.float32, device=q.device)
+        partial_l = torch.empty_like(partial_m)
+        partial_acc = torch.empty(
+            (B, H, triton.cdiv(S_q, split_block_m), n_splits, split_block_m, D),
+            dtype=torch.float32, device=q.device
+        )
+
+        grid_partial = (triton.cdiv(S_q, split_block_m), B * H, n_splits)
+        _tq3_splitk_partial_kernel[grid_partial](
+            q, q.stride(0), q.stride(1), q.stride(2), q.stride(3),
+            k_planes, k_planes.stride(0), k_planes.stride(1), k_planes.stride(2),
+            k_norms, k_norms.stride(0), k_norms.stride(1), k_norms.stride(2),
+            v_planes, v_planes.stride(0), v_planes.stride(1), v_planes.stride(2),
+            v_norms, v_norms.stride(0), v_norms.stride(1), v_norms.stride(2),
+            partial_m, partial_m.stride(0), partial_m.stride(1), partial_m.stride(2), partial_m.stride(3),
+            partial_l, partial_l.stride(0), partial_l.stride(1), partial_l.stride(2), partial_l.stride(3),
+            partial_acc, partial_acc.stride(0), partial_acc.stride(1), partial_acc.stride(2), partial_acc.stride(3), partial_acc.stride(4), partial_acc.stride(5),
+            B, H, S_q, S_k,
+            head_dim=D,
+            BLOCK_M=split_block_m,
+            BLOCK_N=split_block_n,
+            sm_scale=sm_scale,
+        )
+
+        # Merge partials in PyTorch (GPU) using the stable softmax combine rule.
+        # This avoids runtime-trip-count constraints in Triton reduction loops.
+        m = partial_m.max(dim=3).values
+        w = torch.exp(partial_m - m.unsqueeze(3))
+        l = (w * partial_l).sum(dim=3)
+        acc = (w.unsqueeze(-1) * partial_acc).sum(dim=3)
+        out_blocks = (acc / l.clamp_min(1e-12).unsqueeze(-1)).to(torch.float16)
+        out_reshaped = out_blocks.reshape(B, H, -1, D)
+        out.copy_(out_reshaped[:, :, :S_q, :])
+    elif BLOCK_M is not None and BLOCK_N is not None:
         # Manual block size — bypass autotuning (useful for ablation)
         grid = (triton.cdiv(S_q, BLOCK_M), B * H)
         _tq3_attention_kernel[grid](

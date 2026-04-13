@@ -117,76 +117,89 @@ Script: `benchmarks/validate_triton_e2e.py`, results: `results/validate_triton_e
 
 ---
 
-## Triton v3 Kernel — Compact Plane Load Optimization
+## Triton v3 Kernel — Analysis and Real Bottleneck Discovery
 
-### Root-cause analysis of v2's 25 GB/s ceiling
+### Hypothesis: VMEM instruction issue pressure
 
-The v2 kernel already eliminated the scatter-gather VMEM bottleneck (replacing
-`tl.load(Centroids_ptr + k_idx)` with a pure-VALU `tl.where` cascade), but still
-stalled at ~25 GB/s. The remaining bottleneck is **VMEM instruction issue pressure**:
+The v2 `byte_in_plane = d_range // 8` pointer pattern emits **128 VMEM instructions
+per plane** for only 16 unique bytes per token row — L1 absorbs the 7/8 redundant
+cache hits, but the issue port is consumed at 1 instr/4 cycles on CDNA3:
 
-```
-v2 pointer construction:
-  byte_in_plane = d_range // 8   →  [0,0,0,0,0,0,0,0, 1,1,...,1, ..., 15,15,...,15]
-  k_byte_ptrs = base + n[:,None]*stride_kn + byte_in_plane[None,:]  # [BLOCK_N, 128]
-```
+| Source | VMEM instr/KV-block | Issue cycles |
+|--------|---------------------|--------------|
+| v2 K+V planes | 768 (128/plane × 6) | 3 072 |
+| v3 compact load | 96 (16/plane × 6) | 384 |
 
-This emits **128 load instructions per plane** even though only **16 unique bytes**
-exist per token row. L1 (64 KB on MI300X) absorbs the 7/8 redundant accesses so
-HBM traffic is correct at 48 B/token, but the VMEM issue port is saturated:
-
-| Source | Instructions/KV-block | Issue cycles (1 instr/4 cyc) |
-|--------|----------------------|------------------------------|
-| v2 K-planes | 384 (128/plane × 3) | 1 536 |
-| v2 V-planes | 384 | 1 536 |
-| **v2 total** | **768** | **3 072** |
-| v3 K-planes | 48 (16/plane × 3) | 192 |
-| v3 V-planes | 48 | 192 |
-| **v3 total** | **96** | **384** |
-
-8× reduction in VMEM instruction issue pressure; MFMA (estimated ~4 096 cycles for
-two 16×64×128 matmuls) becomes the clear bottleneck and can overlap with the reduced
-VMEM stream.
-
-### v3 implementation: 3D reshape expand (Triton 3.1+)
-
-Load compact `[BLOCK_N, 16]` bytes per plane, then expand to `[BLOCK_N, 128]` in
-registers using Triton 3.1 three-dimensional reshape+bitshift (zero extra HBM):
+**v3 implementation** (`_tq3v3_attention_kernel`, `turboquant_attention_v3()`):
+loads `[BLOCK_N, 16]` compact bytes per plane and expands to `[BLOCK_N, 128]` in
+registers via Triton 3.1 3D `tl.reshape` + bitshift — verified correct on gfx942:
 
 ```python
-# Load compact [BLOCK_N, 16] — 16 VMEM instr per plane (was 128)
-k_ptrs = k_blk + n_range[:, None] * stride_kn + tl.arange(0, 16)[None, :]
-b0k_c  = tl.load(k_ptrs).to(tl.int32)             # [BLOCK_N, 16]
-
-# Expand to [BLOCK_N, 128] in registers — pure VALU
-bit8   = tl.reshape(tl.arange(0, 8), (1, 1, 8))   # [1, 1, 8]
-b0k_3d = tl.reshape(b0k_c, (BLOCK_N, 16, 1))      # [BLOCK_N, 16, 1]
-b0k    = tl.reshape((b0k_3d >> bit8) & 1,          # [BLOCK_N, 16, 8]
-                    (BLOCK_N, head_dim))             # [BLOCK_N, 128]
-# C-order reshape: element [n, 8*byte+bit] → byte j//8, bit j%8 ✓
+bit8   = tl.reshape(tl.arange(0, 8), (1, 1, 8))
+b0k_3d = tl.reshape(b0k_c, (BLOCK_N, 16, 1))          # [BLOCK_N, 16, 1]
+b0k    = tl.reshape((b0k_3d >> bit8) & 1,              # [BLOCK_N, 16, 8]
+                    (BLOCK_N, head_dim))                 # [BLOCK_N, 128] ✓
+# C-order: element [n, 8*byte+bit] → dim j = 8*byte+bit → byte j//8, bit j%8 ✓
 ```
 
-Additional v3 changes:
-- `num_stages=2` on all autotune configs — double-buffers the KV load loop to
-  hide remaining VMEM latency (~400-cycle round-trip) behind MFMA execution.
-- Wider BLOCK_N options (256) added to autotune to amortise per-block overhead.
-- V-plane loads use the same compact pattern, keeping K and V symmetric.
+### Measured result: v3 is 10% *slower* than v2
 
-### Expected performance
+| seq_k | v2 (ms) | v3 (ms) | Δ |
+|-------|---------|---------|---|
+| 1 024 | 0.125 | 0.139 | −10% |
+| 16 384 | 1.935 | 2.142 | −10% |
+| 65 536 | 8.232 | 9.058 | −10% |
 
-| Kernel | VMEM instr/block | Expected eff. BW | vs FP16 SDPA |
-|--------|-----------------|------------------|--------------|
-| v2 (tl.where) | 768 | ~25 GB/s | ~14× slower |
-| v3 (compact load) | 96 | ~60–100 GB/s (est.) | ~5–6× slower |
-| FP16 CK FA2 | — | 1 000–2 000 GB/s | baseline |
+Both kernels autotuned to the same config (BLOCK_M=16, BLOCK_N=64, num_stages=2),
+so the regression is the 3D-reshape VALU overhead on ROCm — not register pressure
+from autotune differences.  The VMEM savings are real but irrelevant because:
 
-The irreducible gap vs FP16: the centroid decode VALU (`_bits_to_centroid`,
-~6 ops/element × BLOCK_N × 128 dims) cannot be eliminated — it is the price of
-the 4.92× compression. At BLOCK_N=64 that is ~49 152 VALU ops per block competing
-with MFMA on the same wave. FP16 SDPA reads 256 B/token and does no decode work.
+### The real bottleneck: grid parallelism (0.7% CU utilization)
 
-Entry point: `turboquant_attention_v3()` in `kernels/tq_triton.py`.
-Validation: run `benchmarks/validate_triton_e2e.py` with `--kernel v3`.
+```
+batch=1, H=8 KV heads, S_q=1 (decode step):
+  grid = (ceil(S_q/BLOCK_M), B×H) = (1, 8) → 8 wavefronts total
+  MI300X: 304 CUs × 4 SIMDs = 1 216 SIMD units
+  → 8 / 1 216 = 0.66% hardware utilization
+  Each wavefront runs 65 536 / 64 = 1 024 sequential KV iterations
+```
+
+8 wavefronts can hide one VMEM transaction's latency by overlapping with the MFMA
+of the *same* block. But no amount of VMEM instruction reduction helps when 1 208
+of 1 216 SIMDs are idle the entire time. The 10% regression means the 3D expand's
+VALU overhead is larger than the latency hidden by fewer VMEM instructions on 8 threads.
+
+### What would actually help: sequence-parallel (Split-K) attention
+
+The fix is to expose the KV-sequence dimension in the grid:
+
+```
+Current:  grid = (1, B×H)          → 8 wavefronts,  1 024 seq iterations each
+Split-K:  grid = (1, B×H, S_k/BKV) → 8 192 wavefronts, 1 seq iteration each
+```
+
+With 8 192 blocks the MI300X is fully saturated (6.7× over-provisioned); each block
+computes a partial log-sum-exp and a reduce kernel combines them — the standard
+FlashAttention-2 "sequence-parallel" pattern. This requires a second kernel pass
+but eliminates the serialization bottleneck entirely.
+
+**Expected gain**: the sequential loop accounts for the dominant wall-clock time.
+Parallelising it across 8 192 wavefronts would bring TQ3 attention from ~8 ms to
+~1–2 ms at seq_k=65 536 (4–8× speedup), narrowing the gap to FP16 CK FA2 to ~2×.
+
+| Kernel | Grid wavefronts | CU util | Est. time seq=65K |
+|--------|----------------|---------|-------------------|
+| v2 / v3 | 8 | 0.7% | ~8–9 ms |
+| Split-K (proposed v4) | 8 192 | 100% | ~1–2 ms |
+| FP16 CK FA2 | ~8 192 | 100% | ~0.5 ms |
+
+The residual gap vs FP16 after Split-K: centroid decode VALU (~49 152 VALU ops per
+block at BLOCK_N=64) cannot be eliminated — it is the irreducible cost of 4.92× KV
+compression. FP16 SDPA reads raw bytes without decoding.
+
+Entry point: `turboquant_attention_v3()` in `kernels/tq_triton.py` (correct, same
+data format as v2, Triton 3.1+ required; not faster for batch=1 decode but
+demonstrates the compact-load pattern for reference and larger-batch workloads).
 
 ---
 

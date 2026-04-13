@@ -1,0 +1,334 @@
+:root {
+  --primary: #81ecff;
+  --secondary: #ff51fa;
+  --tertiary: #ac89ff;
+  --surface-lowest: #000000;
+  --surface: #0a0e14;
+  --surface-container: #151a21;
+  --surface-container-low: #0f141a;
+  --surface-bright: #262c36;
+  --text-main: #f1f3fc;
+  --text-sub: #a8abb3;
+  --ghost: rgba(140, 152, 173, 0.18);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  min-height: 100%;
+}
+
+body {
+  font-family: Inter, system-ui, sans-serif;
+  background: radial-gradient(circle at 20% 0%, #101b2a 0%, #04070c 35%, #000 100%);
+  color: var(--text-main);
+}
+
+.app-bg {
+  position: relative;
+  min-height: 100vh;
+  padding: 1rem;
+}
+
+.bg-noise,
+.bg-grid {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+}
+
+.bg-noise {
+  opacity: 0.12;
+  background-image: radial-gradient(rgba(255, 255, 255, 0.03) 0.6px, transparent 0.6px);
+  background-size: 3px 3px;
+}
+
+.bg-grid {
+  opacity: 0.2;
+  background-image: linear-gradient(rgba(129, 236, 255, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(129, 236, 255, 0.05) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: radial-gradient(ellipse at center, black 40%, transparent 100%);
+}
+
+.glass {
+  background: linear-gradient(160deg, rgba(19, 24, 33, 0.72), rgba(9, 13, 19, 0.65));
+  backdrop-filter: blur(20px);
+  border: 1px solid var(--ghost);
+  box-shadow: 0 0 0 1px rgba(129, 236, 255, 0.06),
+    0 22px 55px rgba(129, 236, 255, 0.06),
+    0 28px 70px rgba(255, 81, 250, 0.05);
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.8rem 1rem;
+  border-radius: 16px;
+  position: sticky;
+  top: 0.8rem;
+  z-index: 20;
+}
+
+.brand {
+  font-family: "Space Grotesk", sans-serif;
+  display: inline-flex;
+  gap: 0.45rem;
+  align-items: center;
+  color: var(--primary);
+  text-decoration: none;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  font-size: 0.82rem;
+}
+
+.brand-mark {
+  width: 0.9rem;
+  height: 0.9rem;
+  border-radius: 999px;
+  background: linear-gradient(135deg, var(--primary), var(--secondary));
+  box-shadow: 0 0 16px rgba(129, 236, 255, 0.55);
+}
+
+.nav-tabs {
+  display: flex;
+  gap: 0.5rem;
+  background: rgba(11, 14, 20, 0.78);
+  padding: 0.2rem;
+  border-radius: 999px;
+}
+
+.tab-link {
+  text-decoration: none;
+  color: var(--text-sub);
+  font-family: "Space Grotesk", sans-serif;
+  font-size: 0.86rem;
+  padding: 0.35rem 0.8rem;
+  border-radius: 999px;
+  transition: all 0.2s ease;
+}
+
+.tab-link.active {
+  color: #041218;
+  background: linear-gradient(120deg, var(--primary), #d2f8ff);
+}
+
+.status-chip {
+  color: var(--secondary);
+  font-family: "Space Grotesk", sans-serif;
+  font-size: 0.75rem;
+}
+
+.report-shell {
+  margin: 1rem auto 3rem;
+  max-width: 1200px;
+  display: grid;
+  gap: 1rem;
+}
+
+.hero {
+  display: grid;
+  gap: 1.2rem;
+  padding: 1.2rem;
+  border-radius: 22px;
+}
+
+.eyebrow {
+  font-family: "Space Grotesk", sans-serif;
+  color: var(--primary);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-size: 0.72rem;
+  margin: 0 0 0.45rem;
+}
+
+.hero h1 {
+  margin: 0;
+  font-family: "Space Grotesk", sans-serif;
+  line-height: 1;
+  font-size: clamp(2rem, 8vw, 4.2rem);
+  text-wrap: balance;
+}
+
+.hero-sub {
+  color: var(--text-sub);
+  max-width: 70ch;
+}
+
+.hero-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.7rem;
+}
+
+.metric-card {
+  border-radius: 12px;
+  padding: 0.7rem 0.85rem;
+  background: linear-gradient(
+    180deg,
+    rgba(129, 236, 255, 0.23),
+    rgba(129, 236, 255, 0.08)
+  );
+  border: 1px solid rgba(129, 236, 255, 0.34);
+}
+
+.metric-card-secondary {
+  background: linear-gradient(180deg, rgba(255, 81, 250, 0.2), rgba(255, 81, 250, 0.07));
+  border-color: rgba(255, 81, 250, 0.34);
+}
+
+.metric-card span {
+  display: block;
+  color: var(--text-sub);
+  font-size: 0.74rem;
+}
+
+.metric-card strong {
+  font-family: "Space Grotesk", sans-serif;
+  font-size: 1.6rem;
+}
+
+.error-block {
+  border-radius: 16px;
+  padding: 1rem;
+}
+
+.markdown-wrap {
+  border-radius: 20px;
+  padding: clamp(1rem, 4vw, 1.6rem);
+}
+
+.markdown-wrap h1,
+.markdown-wrap h2,
+.markdown-wrap h3,
+.markdown-wrap h4 {
+  font-family: "Space Grotesk", sans-serif;
+  scroll-margin-top: 6rem;
+}
+
+.markdown-wrap p,
+.markdown-wrap li,
+.markdown-wrap td {
+  color: #d7dae3;
+  line-height: 1.6;
+}
+
+.markdown-wrap blockquote {
+  margin: 1rem 0;
+  padding: 0.7rem 1rem;
+  border-left: 3px solid rgba(129, 236, 255, 0.45);
+  background: rgba(129, 236, 255, 0.06);
+  border-radius: 8px;
+}
+
+.markdown-wrap table {
+  width: 100%;
+  overflow-x: auto;
+  display: block;
+  border-collapse: separate;
+  border-spacing: 0;
+  margin: 0.8rem 0 1.1rem;
+  background: rgba(8, 11, 18, 0.72);
+  border-radius: 12px;
+}
+
+.markdown-wrap th,
+.markdown-wrap td {
+  padding: 0.55rem 0.62rem;
+  text-align: left;
+  border-bottom: 1px solid rgba(129, 236, 255, 0.07);
+}
+
+.markdown-wrap th {
+  color: var(--primary);
+  font-family: "Space Grotesk", sans-serif;
+  font-size: 0.79rem;
+}
+
+.markdown-wrap code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: rgba(129, 236, 255, 0.08);
+  border-radius: 5px;
+  padding: 0.08rem 0.3rem;
+}
+
+.markdown-wrap pre {
+  background: rgba(9, 12, 19, 0.92);
+  border-radius: 14px;
+  border: 1px solid rgba(129, 236, 255, 0.1);
+  overflow: auto;
+  padding: 0.85rem;
+}
+
+.markdown-wrap img {
+  width: 100%;
+  margin: 0.8rem 0 1rem;
+  border-radius: 12px;
+  border: 1px solid rgba(129, 236, 255, 0.25);
+}
+
+.section-stack {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.section-heading h3 {
+  margin: 0;
+  font-family: "Space Grotesk", sans-serif;
+  font-size: 1.06rem;
+  color: var(--primary);
+}
+
+.figure-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 0.8rem;
+}
+
+.figure-card {
+  border-radius: 14px;
+  padding: 0.75rem;
+  transition: transform 0.22s ease;
+}
+
+.figure-card h4 {
+  margin: 0 0 0.55rem;
+  font-size: 0.84rem;
+  text-transform: capitalize;
+  color: #dfe9ff;
+  font-family: "Space Grotesk", sans-serif;
+}
+
+.figure-card img {
+  width: 100%;
+  border-radius: 10px;
+  display: block;
+}
+
+.missing-figure {
+  min-height: 140px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  color: var(--text-sub);
+  background: rgba(255, 81, 250, 0.07);
+}
+
+@media (max-width: 760px) {
+  .topbar {
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  .status-chip {
+    width: 100%;
+    text-align: center;
+  }
+}

@@ -1,0 +1,66 @@
+[Mon Apr 13 08:08:19 UTC 2026] Step 1: Creating fresh venv at /root/workspace/amd-experiments/.venv-vllm-rocm
+[Mon Apr 13 08:08:21 UTC 2026] Step 2: Installing torch 2.11.0+rocm7.2
+[Mon Apr 13 08:11:35 UTC 2026] torch install complete: 2.11.0+rocm7.2 7.2.26015
+[Mon Apr 13 08:11:36 UTC 2026] Step 3: Cloning vllm v0.19.0 (shallow)
+Cloning into '/tmp/vllm-src'...
+Note: switching to '2a69949bdadf0e8942b7a1619b229cb475beef20'.
+
+You are in 'detached HEAD' state. You can look around, make experimental
+changes and commit them, and you can discard any commits you make in this
+state without impacting any branches by switching back to a branch.
+
+If you want to create a new branch to retain commits you create, you may
+do so (now or later) by using -c with the switch command. Example:
+
+  git switch -c <new-branch-name>
+
+Or undo this operation with:
+
+  git switch -
+
+Turn off this advice by setting config variable advice.detachedHead to false
+
+[Mon Apr 13 08:11:39 UTC 2026] Step 4: Building vllm for ROCm gfx942 (this will take ~30-60 min)
+Looking in indexes: https://pypi.org/simple, https://download.pytorch.org/whl/rocm7.2
+Obtaining file:///tmp/vllm-src
+  Checking if build backend supports build_editable: started
+  Checking if build backend supports build_editable: finished with status 'done'
+  Preparing editable metadata (pyproject.toml): started
+  Preparing editable metadata (pyproject.toml): finished with status 'error'
+  error: subprocess-exited-with-error
+  
+  × Preparing editable metadata (pyproject.toml) did not run successfully.
+  │ exit code: 1
+  ╰─> [18 lines of output]
+      Traceback (most recent call last):
+        File "/root/workspace/amd-experiments/.venv-vllm-rocm/lib/python3.12/site-packages/pip/_vendor/pyproject_hooks/_in_process/_in_process.py", line 353, in <module>
+          main()
+        File "/root/workspace/amd-experiments/.venv-vllm-rocm/lib/python3.12/site-packages/pip/_vendor/pyproject_hooks/_in_process/_in_process.py", line 335, in main
+          json_out['return_val'] = hook(**hook_input['kwargs'])
+                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "/root/workspace/amd-experiments/.venv-vllm-rocm/lib/python3.12/site-packages/pip/_vendor/pyproject_hooks/_in_process/_in_process.py", line 181, in prepare_metadata_for_build_editable
+          return hook(metadata_directory, config_settings)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "/root/workspace/amd-experiments/.venv-vllm-rocm/lib/python3.12/site-packages/setuptools/build_meta.py", line 463, in prepare_metadata_for_build_editable
+          return self.prepare_metadata_for_build_wheel(
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "/root/workspace/amd-experiments/.venv-vllm-rocm/lib/python3.12/site-packages/setuptools/build_meta.py", line 368, in prepare_metadata_for_build_wheel
+          self.run_setup()
+        File "/root/workspace/amd-experiments/.venv-vllm-rocm/lib/python3.12/site-packages/setuptools/build_meta.py", line 313, in run_setup
+          exec(code, locals())
+        File "<string>", line 18, in <module>
+      ModuleNotFoundError: No module named 'packaging'
+      [end of output]
+  
+  note: This error originates from a subprocess, and is likely not a problem with pip.
+error: metadata-generation-failed
+
+× Encountered error while generating package metadata.
+╰─> See above for output.
+
+note: This is an issue with the package mentioned above, not pip.
+hint: See above for details.
+[Mon Apr 13 08:11:41 UTC 2026] BUILD COMPLETE
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+ModuleNotFoundError: No module named 'vllm'
