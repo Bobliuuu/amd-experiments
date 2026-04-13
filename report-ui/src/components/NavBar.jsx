@@ -3,29 +3,31 @@ import { motion } from "framer-motion";
 export default function NavBar() {
   return (
     <header className="topbar glass">
-      <a className="brand" href="#landing">
-        <span className="brand-mark" />
-        <span>QUANTUM_OBSERVATORY</span>
+      <a className="brand" href="#hero" aria-label="AMD Research Hub">
+        <div className="brand-amd">AMD</div>
+        <div>
+          <span className="brand-text">MI300X RESEARCH</span>
+          <span className="brand-sub">KV CACHE COMPRESSION</span>
+        </div>
       </a>
-      <nav className="nav-tabs">
-        <a href="#landing" className="tab-link">
-          Landing
-        </a>
-        <a href="#report-v1" className="tab-link">
-          Report
-        </a>
-        <a href="#report-v2" className="tab-link">
-          Report V2
-        </a>
+
+      <nav className="nav-pills">
+        <a href="#problem" className="nav-pill">Problem</a>
+        <a href="#math" className="nav-pill">Mathematics</a>
+        <a href="#results" className="nav-pill">Results</a>
+        <a href="#reasoning" className="nav-pill">Reasoning</a>
+        <a href="#conclusion" className="nav-pill">Conclusion</a>
+        <a href="#figures" className="nav-pill">Figures</a>
       </nav>
-      <motion.div
-        className="status-chip"
-        initial={{ opacity: 0.5 }}
-        animate={{ opacity: [0.5, 1, 0.5] }}
-        transition={{ repeat: Infinity, duration: 2.6, ease: "easeInOut" }}
-      >
-        LIVE
-      </motion.div>
+
+      <div className="nav-status">
+        <motion.div
+          className="status-dot pulse-dot"
+          animate={{ opacity: [0.5, 1, 0.5] }}
+          transition={{ repeat: Infinity, duration: 2.4, ease: "easeInOut" }}
+        />
+        <span>gfx942 · Apr 2026</span>
+      </div>
     </header>
   );
 }

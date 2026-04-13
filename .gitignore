@@ -17,3 +17,5 @@ venv/
 
 .venv-vllm
 .venv-vllm-rocm
+
+report-ui/node_modules/
