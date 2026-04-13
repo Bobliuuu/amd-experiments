@@ -1,0 +1,82 @@
+[
+  {
+    "method": "fp16",
+    "bits": 0,
+    "cosine_sim_mean": 1.0,
+    "cosine_sim_min": 1.0,
+    "cosine_sim_p5": 1.0,
+    "mse": 0.0
+  },
+  {
+    "method": "planar",
+    "bits": 3,
+    "cosine_sim_mean": 0.9830256700515747,
+    "cosine_sim_std": 0.0031966331880539656,
+    "cosine_sim_min": 0.9683254361152649,
+    "cosine_sim_p5": 0.9768329858779907,
+    "mse": 0.03439967334270477
+  },
+  {
+    "method": "iso",
+    "bits": 3,
+    "cosine_sim_mean": 0.9828133583068848,
+    "cosine_sim_std": 0.0034054366406053305,
+    "cosine_sim_min": 0.9628041386604309,
+    "cosine_sim_p5": 0.9764021635055542,
+    "mse": 0.03427018225193024
+  },
+  {
+    "method": "rotor",
+    "bits": 3,
+    "cosine_sim_mean": 0.9832600355148315,
+    "cosine_sim_std": 0.002940168371424079,
+    "cosine_sim_min": 0.9659668207168579,
+    "cosine_sim_p5": 0.9777889847755432,
+    "mse": 0.033480048179626465
+  },
+  {
+    "method": "turbo",
+    "bits": 3,
+    "cosine_sim_mean": 0.9830539226531982,
+    "cosine_sim_std": 0.0031890145037323236,
+    "cosine_sim_min": 0.9651813507080078,
+    "cosine_sim_p5": 0.977098822593689,
+    "mse": 0.03408113121986389
+  },
+  {
+    "method": "planar",
+    "bits": 4,
+    "cosine_sim_mean": 0.9954087138175964,
+    "cosine_sim_std": 0.0009212183067575097,
+    "cosine_sim_min": 0.9894002079963684,
+    "cosine_sim_p5": 0.9936625361442566,
+    "mse": 0.009222415275871754
+  },
+  {
+    "method": "iso",
+    "bits": 4,
+    "cosine_sim_mean": 0.9953715801239014,
+    "cosine_sim_std": 0.0009682492236606777,
+    "cosine_sim_min": 0.9882201552391052,
+    "cosine_sim_p5": 0.9935107231140137,
+    "mse": 0.009449461475014687
+  },
+  {
+    "method": "rotor",
+    "bits": 4,
+    "cosine_sim_mean": 0.9954171180725098,
+    "cosine_sim_std": 0.0011314640287309885,
+    "cosine_sim_min": 0.9855847358703613,
+    "cosine_sim_p5": 0.9936707615852356,
+    "mse": 0.009350189939141273
+  },
+  {
+    "method": "turbo",
+    "bits": 4,
+    "cosine_sim_mean": 0.9953956604003906,
+    "cosine_sim_std": 0.0010976740159094334,
+    "cosine_sim_min": 0.9860081672668457,
+    "cosine_sim_p5": 0.9934091567993164,
+    "mse": 0.009395141154527664
+  }
+]

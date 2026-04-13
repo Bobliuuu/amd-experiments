@@ -1,0 +1,42 @@
+{
+  "tqm_quantize_kernel_tq3(float const*, float const*, block_tq3_mi300x*, int)": {
+    "count": 54,
+    "avg_us": 3121.67,
+    "total_ms": 168.57,
+    "vgpr": 128,
+    "accum_vgpr": 0,
+    "sgpr": 32
+  },
+  "tqm_quantize_kernel_tq4(float const*, float const*, block_tq4_mi300x*, int)": {
+    "count": 54,
+    "avg_us": 3148.15,
+    "total_ms": 170.0,
+    "vgpr": 128,
+    "accum_vgpr": 0,
+    "sgpr": 32
+  },
+  "tqm_dequantize_kernel_tq3(block_tq3_mi300x const*, float const*, float*, int)": {
+    "count": 53,
+    "avg_us": 170.55,
+    "total_ms": 9.039,
+    "vgpr": 76,
+    "accum_vgpr": 4,
+    "sgpr": 16
+  },
+  "tqm_dequantize_kernel_tq4(block_tq4_mi300x const*, float const*, float*, int)": {
+    "count": 53,
+    "avg_us": 176.35,
+    "total_ms": 9.346,
+    "vgpr": 76,
+    "accum_vgpr": 4,
+    "sgpr": 16
+  },
+  "tqm_fused_dot_kernel_tq3(float const*, block_tq3_mi300x const*, float*, int, int)": {
+    "count": 53,
+    "avg_us": 38.8,
+    "total_ms": 2.056,
+    "vgpr": 12,
+    "accum_vgpr": 4,
+    "sgpr": 32
+  }
+}

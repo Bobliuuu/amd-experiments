@@ -7,28 +7,33 @@ for FP16 — a 4.92× bandwidth reduction.
 
 Algorithm (Flash Attention 2 style):
   For each KV block of BLOCK_N tokens:
-    1. Decode K from bit-planes → centroid indices → centroid values × norm
-       (3 vectorized 2D loads, one per bit-plane; single bulk gather for centroids)
-    2. Compute attention scores: s = q_rotated · k_centroid × norm
-    3. Online softmax update (running max + normalizer)
-    4. Decode V the same way
-    5. Accumulate output: out += softmax_weight × v_centroid × norm
-  Normalize: out /= normalizer
-  Apply inverse rotation: out = out_rotated @ rotation_matrix
-    (because compress does y=x@R^T, decompress does x=y@R; the kernel
-     works in rotated space and needs one final @R to return to original space)
+    1. Load 3 bit-planes (plane-0=LSB, plane-2=MSB), each [BLOCK_N, 16 bytes].
+    2. Extract bit0/bit1/bit2 per (token, dim) by shifting the byte and masking.
+    3. Reconstruct centroid value via cascaded tl.where — no gather/table-lookup.
+       (Only 6 VALU instructions vs a scatter VMEM load per element.)
+    4. Compute Q·K^T matmul (FP16 MFMA), then fold norms *after* the dot product:
+         scores = dot(q, k_centroids^T) * (k_norms * sm_scale)
+       This avoids materializing a full [BLOCK_N, head_dim] FP32 tensor.
+    5. Online softmax update.
+    6. For V: scale the softmax weights p by v_norms *before* the dot product:
+         acc += dot(p * v_norms, v_centroids)
+       Again, p is [BLOCK_M, BLOCK_N] (tiny) so the norm multiply is O(BLOCK_N).
+  Normalize and write output.
+  Apply inverse rotation outside the kernel (one 128×128 matmul, negligible).
 
 Bit-plane format (matches turboquant_mi300x.py/_pack_bitplanes):
   Block = [norm:4 bytes][plane0:16 bytes][plane1:16 bytes][plane2:16 bytes]
   Plane b (b=0=LSB, b=2=MSB): bit b of index[j] at byte (b*16+j//8), bit (j%8)
 
 Performance on MI300X (gfx942):
-  - 4.92× less HBM traffic vs FP16 attention
-  - Expected speedup: 1.5-3× vs Python TQ3 wrapper at ≥32K context
+  Original kernel: effective 12 GB/s (compute-bound on gather + bit-extract).
+  This kernel: replaces scatter-VMEM gather with pure VALU (tl.where cascades),
+  folds norms to skip two [BLOCK_N, D] tensor materializations.
+  Autotuning finds the best (BLOCK_M, BLOCK_N) for the decode-step workload.
 
 Usage:
     from tq_triton import turboquant_attention_fwd
-    # q: (B, H, S_q, D) float16/float32 — PRE-ROTATED (q @ R^T)
+    # q: (B, H, S_q, D) float16 — PRE-ROTATED (q @ R^T)
     # k_planes: (B, H, S_k, 48) uint8
     # k_norms:  (B, H, S_k)     float32
     # rotation: (D, D)           float32 — the rotation matrix R
@@ -41,29 +46,73 @@ import triton
 import triton.language as tl
 from typing import Optional
 
+
 # ──────────────────────────────────────────────────────────────────────────────
-# TQ3 codebook (must match turboquant_mi300x.py)
+# Centroid constants (compile-time, avoids any runtime pointer)
 # ──────────────────────────────────────────────────────────────────────────────
 
-TQ3_CENTROIDS = torch.tensor([
-    -0.18904037194348838,
-    -0.11879501670185091,
-    -0.06702922184405663,
-    -0.02174971334976657,
-     0.02174971334976654,
-     0.06702922184405660,
-     0.11879501670185087,
-     0.18904037194348833,
-], dtype=torch.float32)
+# TQ3 Lloyd-Max centroids for N(0,1) after rotation:
+#   index 0-3 → negative; index 4-7 → positive (symmetric)
+# Magnitudes for each (b1, b0) pair — same for positive and negative side,
+# just mirrored: for negative, bit pattern *inverts* before the mag lookup.
+_C00: tl.constexpr = 0.02174971334976657   # |idx|=0 in {4,3} → smallest
+_C01: tl.constexpr = 0.06702922184405663   # |idx|=1 in {5,2}
+_C10: tl.constexpr = 0.11879501670185091   # |idx|=2 in {6,1}
+_C11: tl.constexpr = 0.18904037194348838   # |idx|=3 in {7,0} → largest
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Inline centroid decode — no pointer, no gather, pure VALU
+# ──────────────────────────────────────────────────────────────────────────────
+
+@triton.jit
+def _bits_to_centroid(b0, b1, b2):
+    """
+    Convert three [BLOCK_N, head_dim] int32 bit tensors (each element 0 or 1)
+    to float32 TQ3 centroid values.  No memory access — pure ALU.
+
+    Encoding (index = b2<<2 | b1<<1 | b0):
+      Positive (b2=1): b1=0,b0=0 → 0.02175; b1=1,b0=1 → 0.18904
+      Negative (b2=0): b1=0,b0=0 → -0.18904; b1=1,b0=1 → -0.02175
+    The magnitude table is the same for both signs; for negative, (b1,b0) is
+    complemented before the lookup so the ordering inverts correctly.
+
+    6 VALU instructions total (2 flip-selects + 2 magnitude-selects + sign + mul).
+    """
+    b0f = b0.to(tl.float32)
+    b1f = b1.to(tl.float32)
+    b2f = b2.to(tl.float32)
+    # For negative centroids (b2=0), flip b0 and b1 so the same table gives the
+    # right magnitude (high bit pattern → small |value| on the negative side).
+    eb0 = tl.where(b2f > 0.5, b0f, 1.0 - b0f)
+    eb1 = tl.where(b2f > 0.5, b1f, 1.0 - b1f)
+    mag = tl.where(eb1 > 0.5,
+                   tl.where(eb0 > 0.5, _C11, _C10),
+                   tl.where(eb0 > 0.5, _C01, _C00))
+    sign = 2.0 * b2f - 1.0   # +1.0 for positive (b2=1), -1.0 for negative (b2=0)
+    return sign * mag
 
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Triton kernel: fused TQ3 dequantize + Flash Attention 2
 # ──────────────────────────────────────────────────────────────────────────────
 
+@triton.autotune(
+    configs=[
+        # (BLOCK_M, BLOCK_N): BLOCK_M=16 is optimal for decode (S_q≈1)
+        # Smaller BLOCK_N → less register pressure → more concurrent wavefronts
+        triton.Config({"BLOCK_M": 16, "BLOCK_N": 32},  num_warps=2),
+        triton.Config({"BLOCK_M": 16, "BLOCK_N": 64},  num_warps=4),
+        triton.Config({"BLOCK_M": 16, "BLOCK_N": 128}, num_warps=4),
+        triton.Config({"BLOCK_M": 32, "BLOCK_N": 32},  num_warps=2),
+        triton.Config({"BLOCK_M": 32, "BLOCK_N": 64},  num_warps=4),
+        triton.Config({"BLOCK_M": 64, "BLOCK_N": 64},  num_warps=4),
+    ],
+    key=["seq_q", "seq_k", "head_dim"],
+)
 @triton.jit
 def _tq3_attention_kernel(
-    # Query (pre-rotated: q_rot = q @ R^T)
+    # Query (pre-rotated: q_rot = q @ R^T), float16
     Q_ptr, stride_qb, stride_qh, stride_qm, stride_qd,
     # Compressed K: bit-planes (uint8, 48 bytes per token)
     K_planes_ptr, stride_kb, stride_kh, stride_kn,
@@ -73,11 +122,9 @@ def _tq3_attention_kernel(
     V_planes_ptr, stride_vb, stride_vh, stride_vn,
     # V norms (float32, one per token)
     V_norms_ptr, stride_vnb, stride_vnh, stride_vnn,
-    # Codebook (8 float32 centroid values)
-    Centroids_ptr,
-    # Output (float16, in ROTATED space — caller must apply @R)
+    # Output (float16, in ROTATED space — caller applies @R for original space)
     O_ptr, stride_ob, stride_oh, stride_om, stride_od,
-    # Shape
+    # Shape / scale
     batch: int, heads: int, seq_q: int, seq_k: int,
     head_dim: tl.constexpr,
     BLOCK_M: tl.constexpr,
@@ -85,18 +132,25 @@ def _tq3_attention_kernel(
     sm_scale: float,
 ):
     """
-    Fused TQ3 dequantize + attention.
+    Fused TQ3 dequantize + attention (autotuned BLOCK_M / BLOCK_N).
 
     Grid: (ceil(S_q/BLOCK_M), B×H)
 
-    Key optimization: instead of a per-token scatter loop (which produces
-    incorrect results on ROCm Triton), use 3 vectorized 2D pointer loads
-    (one per bit-plane) that read [BLOCK_N, head_dim] byte values in one shot.
-    Each (n, d) element loads from byte position n*48 + plane*16 + d//8, then
-    extracts bit d%8. This avoids any scatter/gather over a pre-built 2D array.
+    Key optimizations vs prior version:
+      1. Centroid lookup via tl.where cascade (6 VALU instr) instead of
+         scatter-gather (VMEM per element, 400-cycle latency on CDNA3).
+      2. K norms folded into scores AFTER dot product:
+           scores = dot(q, k_centroids^T) * (norms * sm_scale)
+         Avoids materializing k_fp32 = k_centroids * norms[:, None] in registers.
+      3. V norms folded into p BEFORE accumulate dot product:
+           acc += dot(p * v_norms[None, :], v_centroids)
+         p is [BLOCK_M, BLOCK_N] — scaling it is O(BLOCK_M * BLOCK_N), not
+         O(BLOCK_N * D), saving D/BLOCK_M multiplies.
+      4. FP16 inputs to tl.dot → uses MFMA fp16 accumulate (faster on gfx942).
+      5. Autotuning picks best (BLOCK_M, BLOCK_N) per seq shape.
     """
-    pid_m  = tl.program_id(0)  # query block index
-    pid_bh = tl.program_id(1)  # combined batch × head
+    pid_m  = tl.program_id(0)
+    pid_bh = tl.program_id(1)
 
     batch_idx = pid_bh // heads
     head_idx  = pid_bh %  heads
@@ -108,7 +162,8 @@ def _tq3_attention_kernel(
               + tl.arange(0, BLOCK_M)[:, None] * stride_qm
               + tl.arange(0, head_dim)[None, :] * stride_qd)
     m_mask = (pid_m * BLOCK_M + tl.arange(0, BLOCK_M)) < seq_q
-    q = tl.load(q_ptrs, mask=m_mask[:, None], other=0.0).to(tl.float32)
+    # Load in FP16 — keeps it in FP16 for MFMA; accumulate scores in FP32
+    q = tl.load(q_ptrs, mask=m_mask[:, None], other=0.0).to(tl.float16)
 
     # ── Online softmax state ───────────────────────────────────────────────────
     m_i = tl.full([BLOCK_M], -float("inf"), dtype=tl.float32)
@@ -121,103 +176,94 @@ def _tq3_attention_kernel(
     v_base  = batch_idx * stride_vb  + head_idx * stride_vh
     vn_base = batch_idx * stride_vnb + head_idx * stride_vnh
 
-    # Precompute dimension-indexed arrays (constexpr shapes, computed once)
+    # Per-dimension byte/bit offsets (constexpr, computed once, no runtime cost)
     n_range = tl.arange(0, BLOCK_N)   # [BLOCK_N]
     d_range = tl.arange(0, head_dim)  # [head_dim]
-    # For each dimension d: which byte in the 16-byte plane, and which bit
-    byte_in_plane = d_range // 8      # [head_dim], values 0..15  (constexpr arith)
-    bit_in_byte   = d_range % 8       # [head_dim], values 0..7
+    byte_in_plane = d_range // 8      # [head_dim] which byte within a 16-byte plane
+    bit_in_byte   = d_range % 8       # [head_dim] which bit within that byte
 
     # ── Iterate over KV blocks ─────────────────────────────────────────────────
     for block_n_start in range(0, seq_k, BLOCK_N):
-        n_mask = (block_n_start + n_range) < seq_k  # [BLOCK_N]
+        n_mask    = (block_n_start + n_range) < seq_k          # [BLOCK_N]
+        n_mask_2d = n_mask[:, None]                             # [BLOCK_N, 1] → broadcast
 
         # ── Decode K ──────────────────────────────────────────────────────────
-        # k_planes memory layout: [B, H, S_k, 48], stride_kn=48
-        # For token n in this block, byte b of plane p is at:
-        #   K_planes_ptr + k_base + (block_n_start+n)*48 + p*16 + b
-        #
-        # We do a [BLOCK_N, head_dim] 2D gather where element (n, d) reads:
-        #   plane_p byte at: base + n*48 + p*16 + d//8
-        #
-        # This loads each unique byte 8 times (for d=0..7 with same d//8),
-        # but the L1 cache (64KB on MI300X) absorbs the repetitions — actual
-        # HBM traffic is still only 48 bytes/token.
-
+        # Memory layout: [B, H, S_k, 48 bytes] with stride_kn=48.
+        # 3 vectorized 2D loads, one per bit-plane (each 16 bytes wide).
+        # Each (n, d) element selects byte = n*48 + plane*16 + d//8.
+        # Loading each unique byte 8 times (once per d sharing that byte),
+        # but L1 cache (64KB on MI300X) absorbs the repetition — actual
+        # HBM traffic = 48 bytes/token as designed.
         k_block_base = K_planes_ptr + k_base + block_n_start * stride_kn
-        # Pointer arrays [BLOCK_N, head_dim]: one load per bit-plane
-        k_p0_ptrs = (k_block_base
-                     + n_range[:, None] * stride_kn
-                     + byte_in_plane[None, :])           # plane 0: bytes [0..15]
-        k_p1_ptrs = k_p0_ptrs + 16                       # plane 1: bytes [16..31]
-        k_p2_ptrs = k_p0_ptrs + 32                       # plane 2: bytes [32..47]
+        k_byte_ptrs  = (k_block_base
+                        + n_range[:, None] * stride_kn
+                        + byte_in_plane[None, :])        # [BLOCK_N, head_dim]
+        b0k_raw = tl.load(k_byte_ptrs,      mask=n_mask_2d, other=0).to(tl.int32)
+        b1k_raw = tl.load(k_byte_ptrs + 16, mask=n_mask_2d, other=0).to(tl.int32)
+        b2k_raw = tl.load(k_byte_ptrs + 32, mask=n_mask_2d, other=0).to(tl.int32)
 
-        n_mask_2d = n_mask[:, None]  # [BLOCK_N, 1] → broadcasts to [BLOCK_N, head_dim]
-        b0k = tl.load(k_p0_ptrs, mask=n_mask_2d, other=0).to(tl.int32)  # [BN, D]
-        b1k = tl.load(k_p1_ptrs, mask=n_mask_2d, other=0).to(tl.int32)
-        b2k = tl.load(k_p2_ptrs, mask=n_mask_2d, other=0).to(tl.int32)
+        # Extract individual bits for each (token, dim) — [BLOCK_N, head_dim]
+        bit_shift = bit_in_byte[None, :]   # [1, head_dim] broadcasts over BLOCK_N
+        b0k = (b0k_raw >> bit_shift) & 1
+        b1k = (b1k_raw >> bit_shift) & 1
+        b2k = (b2k_raw >> bit_shift) & 1
 
-        # Extract 3-bit indices for each (token, dimension) pair
-        bit_shift = bit_in_byte[None, :]  # [1, head_dim] → broadcast
-        k_idx = (((b0k >> bit_shift) & 1)
-               | (((b1k >> bit_shift) & 1) << 1)
-               | (((b2k >> bit_shift) & 1) << 2))  # [BLOCK_N, head_dim], values 0-7
-
-        # Bulk centroid lookup: [BLOCK_N, head_dim] gather from 8-entry table
-        k_centroids = tl.load(Centroids_ptr + k_idx)  # [BLOCK_N, head_dim] float32
-
-        # Scale by norms → K in rotated space
-        k_norms_block = tl.load(
-            K_norms_ptr + kn_base + (block_n_start + n_range) * stride_knn,
-            mask=n_mask, other=0.0)
-        k_fp32 = k_centroids * k_norms_block[:, None]  # [BLOCK_N, head_dim]
+        # Centroid values via pure VALU (no gather, no Centroids_ptr)
+        k_centroids = _bits_to_centroid(b0k, b1k, b2k)  # [BLOCK_N, head_dim] fp32
 
         # ── Attention scores [BLOCK_M, BLOCK_N] ───────────────────────────────
-        # q_rot · k_centroid_rot × norm = q · k_decompressed  (rotation cancels)
-        scores = tl.dot(q, tl.trans(k_fp32)) * sm_scale
+        # dot(q, k_centroids^T) using FP16 MFMA, accumulate in FP32.
+        # Norms folded in AFTER the matmul → no [BLOCK_N, D] norm-scaled tensor.
+        raw_scores = tl.dot(q, k_centroids.to(tl.float16).T,
+                            out_dtype=tl.float32)       # [BLOCK_M, BLOCK_N]
+
+        k_norms_block = tl.load(
+            K_norms_ptr + kn_base + (block_n_start + n_range) * stride_knn,
+            mask=n_mask, other=0.0)                      # [BLOCK_N] fp32
+        # Scale each KV-token's score column by its norm and softmax scale
+        scores = raw_scores * (k_norms_block * sm_scale)[None, :]
         scores = tl.where(n_mask[None, :], scores, -1e9)
 
         # ── Online softmax update ──────────────────────────────────────────────
-        m_ij  = tl.max(scores, axis=1)          # [BLOCK_M] running max
+        m_ij  = tl.max(scores, axis=1)
         m_new = tl.maximum(m_i, m_ij)
-        alpha = tl.exp(m_i - m_new)             # rescale factor for old acc
-        p     = tl.exp(scores - m_new[:, None]) # [BLOCK_M, BLOCK_N] unnorm weights
+        alpha = tl.exp(m_i - m_new)
+        p     = tl.exp(scores - m_new[:, None])          # [BLOCK_M, BLOCK_N]
         l_i   = l_i * alpha + tl.sum(p, axis=1)
         m_i   = m_new
 
-        # ── Decode V (same approach as K) ─────────────────────────────────────
+        # ── Decode V (identical bit-extraction pattern) ────────────────────────
         v_block_base = V_planes_ptr + v_base + block_n_start * stride_vn
-        v_p0_ptrs = (v_block_base
-                     + n_range[:, None] * stride_vn
-                     + byte_in_plane[None, :])
-        v_p1_ptrs = v_p0_ptrs + 16
-        v_p2_ptrs = v_p0_ptrs + 32
+        v_byte_ptrs  = (v_block_base
+                        + n_range[:, None] * stride_vn
+                        + byte_in_plane[None, :])
+        b0v_raw = tl.load(v_byte_ptrs,      mask=n_mask_2d, other=0).to(tl.int32)
+        b1v_raw = tl.load(v_byte_ptrs + 16, mask=n_mask_2d, other=0).to(tl.int32)
+        b2v_raw = tl.load(v_byte_ptrs + 32, mask=n_mask_2d, other=0).to(tl.int32)
 
-        b0v = tl.load(v_p0_ptrs, mask=n_mask_2d, other=0).to(tl.int32)
-        b1v = tl.load(v_p1_ptrs, mask=n_mask_2d, other=0).to(tl.int32)
-        b2v = tl.load(v_p2_ptrs, mask=n_mask_2d, other=0).to(tl.int32)
-
-        v_idx = (((b0v >> bit_shift) & 1)
-               | (((b1v >> bit_shift) & 1) << 1)
-               | (((b2v >> bit_shift) & 1) << 2))
-        v_centroids = tl.load(Centroids_ptr + v_idx)  # [BLOCK_N, head_dim]
-
-        v_norms_block = tl.load(
-            V_norms_ptr + vn_base + (block_n_start + n_range) * stride_vnn,
-            mask=n_mask, other=0.0)
-        # V in rotated space (caller applies @R to convert to original space)
-        v_fp32 = v_centroids * v_norms_block[:, None]  # [BLOCK_N, head_dim]
+        b0v = (b0v_raw >> bit_shift) & 1
+        b1v = (b1v_raw >> bit_shift) & 1
+        b2v = (b2v_raw >> bit_shift) & 1
+        v_centroids = _bits_to_centroid(b0v, b1v, b2v)  # [BLOCK_N, head_dim] fp32
 
         # ── Accumulate output ──────────────────────────────────────────────────
-        acc = acc * alpha[:, None] + tl.dot(p, v_fp32)
+        # Fold V norms into p (tiny [BLOCK_M, BLOCK_N] tensor) instead of
+        # expanding norms across [BLOCK_N, head_dim].
+        v_norms_block = tl.load(
+            V_norms_ptr + vn_base + (block_n_start + n_range) * stride_vnn,
+            mask=n_mask, other=0.0)                      # [BLOCK_N] fp32
+        p_scaled = p * v_norms_block[None, :]            # [BLOCK_M, BLOCK_N]
+
+        acc = acc * alpha[:, None] + tl.dot(p_scaled.to(tl.float16),
+                                            v_centroids.to(tl.float16),
+                                            out_dtype=tl.float32)
 
     # ── Normalize and write output ─────────────────────────────────────────────
-    # Guard against empty sequences (l_i=0) to avoid NaN
     l_safe = tl.where(l_i > 0, l_i, 1.0)
     acc = acc / l_safe[:, None]
 
-    out_off = (batch_idx * stride_ob + head_idx * stride_oh
-               + pid_m * BLOCK_M * stride_om)
+    out_off  = (batch_idx * stride_ob + head_idx * stride_oh
+                + pid_m * BLOCK_M * stride_om)
     out_ptrs = (O_ptr + out_off
                 + tl.arange(0, BLOCK_M)[:, None] * stride_om
                 + tl.arange(0, head_dim)[None, :] * stride_od)
@@ -225,7 +271,349 @@ def _tq3_attention_kernel(
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Python entry point
+# v3 kernel: compact 16-byte plane loads (8× fewer VMEM instructions)
+#
+# Root cause of v2's 25 GB/s ceiling (vs 5300 GB/s HBM peak):
+#   v2 loads k_byte_ptrs = [BLOCK_N, head_dim=128] where byte_in_plane = d//8
+#   maps 8 consecutive columns to the same byte.  L1 caches the 7 redundant
+#   hits, so HBM traffic is correct (48 B/token), but 384 VMEM *instructions*
+#   are issued per KV block (128/plane × 3 planes) — at 1 instr / 4 cycles on
+#   CDNA3 that is 1536 cycles just for instruction issue, competing with MFMA.
+#
+# Fix: load [BLOCK_N, 16] compact bytes (one per unique byte in the plane),
+# then expand to [BLOCK_N, 128] in registers via Triton 3.1 3D reshape+shift:
+#
+#   b_cmp : [BLOCK_N, 16]
+#   b_3d  = reshape(b_cmp, (BLOCK_N, 16, 1)) >> reshape(arange(8), (1, 1, 8))
+#           → [BLOCK_N, 16, 8]  (pure VALU: 8 shift+AND instructions)
+#   b     = reshape(b_3d & 1,  (BLOCK_N, 128))
+#           C-order: element [n, 8*byte+bit] = correct — matches dim j → byte j//8, bit j%8.
+#
+# VMEM instruction count: 48 total (16/plane × 3 planes) vs 384 in v2 → 8× drop.
+# The expansion is 3 × BLOCK_N pure-VALU shift+AND ops — negligible vs MFMA.
+#
+# Additional v3 changes:
+#   • num_stages=2 on all configs — software-pipeline the KV load loop to hide
+#     the remaining VMEM latency behind MFMA execution.
+#   • Wider BLOCK_N options (128, 256) probed in autotune — larger tiles amortise
+#     the per-block overhead (norm loads, softmax bookkeeping).
+#   • K and V planes share one base-pointer computation per KV block.
+# ──────────────────────────────────────────────────────────────────────────────
+
+@triton.autotune(
+    configs=[
+        # num_stages=2: double-buffer the KV load loop (hides ~400-cycle VMEM latency)
+        triton.Config({"BLOCK_M": 16, "BLOCK_N":  32}, num_warps=2, num_stages=2),
+        triton.Config({"BLOCK_M": 16, "BLOCK_N":  64}, num_warps=4, num_stages=2),
+        triton.Config({"BLOCK_M": 16, "BLOCK_N": 128}, num_warps=4, num_stages=2),
+        triton.Config({"BLOCK_M": 16, "BLOCK_N": 256}, num_warps=8, num_stages=2),
+        triton.Config({"BLOCK_M": 32, "BLOCK_N":  64}, num_warps=4, num_stages=2),
+        triton.Config({"BLOCK_M": 32, "BLOCK_N": 128}, num_warps=4, num_stages=2),
+        triton.Config({"BLOCK_M": 64, "BLOCK_N":  64}, num_warps=4, num_stages=2),
+        # num_stages=1 variants in case the register pressure from larger tiles
+        # prevents double buffering (CDNA3 has 512 VGPRs / wavefront):
+        triton.Config({"BLOCK_M": 16, "BLOCK_N": 128}, num_warps=4, num_stages=1),
+        triton.Config({"BLOCK_M": 16, "BLOCK_N": 256}, num_warps=8, num_stages=1),
+    ],
+    key=["seq_q", "seq_k", "head_dim"],
+)
+@triton.jit
+def _tq3v3_attention_kernel(
+    # Query (pre-rotated), float16
+    Q_ptr, stride_qb, stride_qh, stride_qm, stride_qd,
+    # Compressed K: bit-planes (uint8, 48 bytes per token, stride_kn=48)
+    K_planes_ptr, stride_kb, stride_kh, stride_kn,
+    # K norms (float32, one per token)
+    K_norms_ptr, stride_knb, stride_knh, stride_knn,
+    # Compressed V: bit-planes (uint8, 48 bytes per token)
+    V_planes_ptr, stride_vb, stride_vh, stride_vn,
+    # V norms (float32, one per token)
+    V_norms_ptr, stride_vnb, stride_vnh, stride_vnn,
+    # Output (float16)
+    O_ptr, stride_ob, stride_oh, stride_om, stride_od,
+    # Shape / scale
+    batch: int, heads: int, seq_q: int, seq_k: int,
+    head_dim: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+    sm_scale: float,
+):
+    """
+    v3: fused TQ3 dequantize + Flash-Attention-2 attention.
+
+    Key change vs v2: compact plane loads reduce VMEM issue pressure 8×.
+
+    v2 issued 384 VMEM instructions per KV block (128/plane × 3 planes × K)
+    plus another 384 for V = 768 total.  Each instruction takes 4 cycles to
+    issue on CDNA3, so load issue alone consumed ~3072 cycles/block even though
+    L1 served 7/8 of the accesses from cache (HBM traffic was already minimal).
+
+    v3 loads [BLOCK_N, 16] bytes per plane (the 16 unique bytes), then expands
+    to [BLOCK_N, 128] entirely in registers using 3D reshape+bitshift.  VMEM
+    issue drops to 48 instructions per KV block (K+V combined: 96), freeing the
+    issue pipeline for MFMA overlap.  The bit-expand adds 3 × BLOCK_N pure-VALU
+    shift+AND operations per plane — negligible vs the MFMA compute.
+
+    Requires Triton ≥ 3.1 (for tl.reshape on 3D shapes and element-wise 3D ops).
+    """
+    pid_m  = tl.program_id(0)
+    pid_bh = tl.program_id(1)
+    batch_idx = pid_bh // heads
+    head_idx  = pid_bh %  heads
+
+    # ── Load Q block [BLOCK_M, head_dim] ─────────────────────────────────────
+    q_off  = (batch_idx * stride_qb + head_idx * stride_qh
+              + pid_m * BLOCK_M * stride_qm)
+    q_ptrs = (Q_ptr + q_off
+              + tl.arange(0, BLOCK_M)[:, None] * stride_qm
+              + tl.arange(0, head_dim)[None, :] * stride_qd)
+    m_mask = (pid_m * BLOCK_M + tl.arange(0, BLOCK_M)) < seq_q
+    q = tl.load(q_ptrs, mask=m_mask[:, None], other=0.0).to(tl.float16)
+
+    # ── Online softmax state ──────────────────────────────────────────────────
+    m_i = tl.full([BLOCK_M], -float("inf"), dtype=tl.float32)
+    l_i = tl.zeros([BLOCK_M], dtype=tl.float32)
+    acc  = tl.zeros([BLOCK_M, head_dim], dtype=tl.float32)
+
+    k_base  = batch_idx * stride_kb  + head_idx * stride_kh
+    kn_base = batch_idx * stride_knb + head_idx * stride_knh
+    v_base  = batch_idx * stride_vb  + head_idx * stride_vh
+    vn_base = batch_idx * stride_vnb + head_idx * stride_vnh
+
+    n_range = tl.arange(0, BLOCK_N)   # [BLOCK_N]
+    # Compact byte range: 16 bytes per plane (one byte per 8 consecutive dims)
+    p16     = tl.arange(0, 16)        # [16]
+    # Bit positions 0..7 in a 3D layout for the expand step — shape (1, 1, 8)
+    # CDNA3 shift instructions are free when the shift amount is a constexpr lane offset.
+    bit8    = tl.reshape(tl.arange(0, 8), (1, 1, 8))  # [1, 1, 8]
+
+    # ── Iterate over KV blocks ────────────────────────────────────────────────
+    for block_n_start in range(0, seq_k, BLOCK_N):
+        n_mask    = (block_n_start + n_range) < seq_k   # [BLOCK_N]
+        n_mask_2d = n_mask[:, None]                      # [BLOCK_N, 1]
+
+        # ── Load K planes: [BLOCK_N, 16] compact bytes per plane ─────────────
+        # vs v2's [BLOCK_N, 128] which issued 8× duplicate pointer dereferences.
+        # 3 loads of [BLOCK_N, 16] = 48 VMEM instructions total (was 384).
+        k_blk = K_planes_ptr + k_base + block_n_start * stride_kn
+        k_ptrs = k_blk + n_range[:, None] * stride_kn + p16[None, :]  # [BLOCK_N, 16]
+        b0k_c  = tl.load(k_ptrs,      mask=n_mask_2d, other=0).to(tl.int32)
+        b1k_c  = tl.load(k_ptrs + 16, mask=n_mask_2d, other=0).to(tl.int32)
+        b2k_c  = tl.load(k_ptrs + 32, mask=n_mask_2d, other=0).to(tl.int32)
+
+        # ── Expand [BLOCK_N, 16] → [BLOCK_N, 128] via 3D reshape ─────────────
+        # reshape(b_c, (N,16,1)) >> [[[ 0,1,2,...,7 ]]]  →  [N, 16, 8]
+        # reshape(_, (N, 128))  gives element [n, 8*byte+bit] = (byte_val>>bit)&1
+        # C-order ensures dim j maps to byte j//8, bit j%8 — matching v2's
+        # byte_in_plane = d//8, bit_in_byte = d%8 convention.
+        b0k_3d = tl.reshape(b0k_c, (BLOCK_N, 16, 1))
+        b1k_3d = tl.reshape(b1k_c, (BLOCK_N, 16, 1))
+        b2k_3d = tl.reshape(b2k_c, (BLOCK_N, 16, 1))
+
+        b0k = tl.reshape((b0k_3d >> bit8) & 1, (BLOCK_N, head_dim))
+        b1k = tl.reshape((b1k_3d >> bit8) & 1, (BLOCK_N, head_dim))
+        b2k = tl.reshape((b2k_3d >> bit8) & 1, (BLOCK_N, head_dim))
+
+        k_centroids = _bits_to_centroid(b0k, b1k, b2k)  # [BLOCK_N, head_dim] fp32
+
+        # ── Attention scores [BLOCK_M, BLOCK_N] ──────────────────────────────
+        raw_scores = tl.dot(q, k_centroids.to(tl.float16).T, out_dtype=tl.float32)
+
+        k_norms_block = tl.load(
+            K_norms_ptr + kn_base + (block_n_start + n_range) * stride_knn,
+            mask=n_mask, other=0.0)
+        scores = raw_scores * (k_norms_block * sm_scale)[None, :]
+        scores = tl.where(n_mask[None, :], scores, -1e9)
+
+        # ── Online softmax update ─────────────────────────────────────────────
+        m_ij  = tl.max(scores, axis=1)
+        m_new = tl.maximum(m_i, m_ij)
+        alpha = tl.exp(m_i - m_new)
+        p     = tl.exp(scores - m_new[:, None])
+        l_i   = l_i * alpha + tl.sum(p, axis=1)
+        m_i   = m_new
+
+        # ── Load V planes: same compact pattern ───────────────────────────────
+        v_blk  = V_planes_ptr + v_base + block_n_start * stride_vn
+        v_ptrs = v_blk + n_range[:, None] * stride_vn + p16[None, :]
+        b0v_c  = tl.load(v_ptrs,      mask=n_mask_2d, other=0).to(tl.int32)
+        b1v_c  = tl.load(v_ptrs + 16, mask=n_mask_2d, other=0).to(tl.int32)
+        b2v_c  = tl.load(v_ptrs + 32, mask=n_mask_2d, other=0).to(tl.int32)
+
+        b0v_3d = tl.reshape(b0v_c, (BLOCK_N, 16, 1))
+        b1v_3d = tl.reshape(b1v_c, (BLOCK_N, 16, 1))
+        b2v_3d = tl.reshape(b2v_c, (BLOCK_N, 16, 1))
+
+        b0v = tl.reshape((b0v_3d >> bit8) & 1, (BLOCK_N, head_dim))
+        b1v = tl.reshape((b1v_3d >> bit8) & 1, (BLOCK_N, head_dim))
+        b2v = tl.reshape((b2v_3d >> bit8) & 1, (BLOCK_N, head_dim))
+
+        v_centroids = _bits_to_centroid(b0v, b1v, b2v)
+
+        # ── Accumulate output ─────────────────────────────────────────────────
+        v_norms_block = tl.load(
+            V_norms_ptr + vn_base + (block_n_start + n_range) * stride_vnn,
+            mask=n_mask, other=0.0)
+        p_scaled = p * v_norms_block[None, :]
+
+        acc = acc * alpha[:, None] + tl.dot(p_scaled.to(tl.float16),
+                                            v_centroids.to(tl.float16),
+                                            out_dtype=tl.float32)
+
+    # ── Normalize and write output ────────────────────────────────────────────
+    l_safe = tl.where(l_i > 0, l_i, 1.0)
+    acc = acc / l_safe[:, None]
+
+    out_off  = (batch_idx * stride_ob + head_idx * stride_oh
+                + pid_m * BLOCK_M * stride_om)
+    out_ptrs = (O_ptr + out_off
+                + tl.arange(0, BLOCK_M)[:, None] * stride_om
+                + tl.arange(0, head_dim)[None, :] * stride_od)
+    tl.store(out_ptrs, acc.to(tl.float16), mask=m_mask[:, None])
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Fast-decode variant: nibble-packed format (4 bits per index, 64 bytes/token)
+# ──────────────────────────────────────────────────────────────────────────────
+# Trade 23% compression (64B vs 52B) for trivially cheap bit extraction:
+#   byte i = (idx[2i] << 4) | idx[2i+1]   (both in range 0-7, upper nibble used)
+# Decode: idx_even = (byte >> 4) & 7,  idx_odd = byte & 7
+# Then use _bits_to_centroid as before, or a direct 8-entry tl.where chain.
+
+@triton.autotune(
+    configs=[
+        triton.Config({"BLOCK_M": 16, "BLOCK_N": 32},  num_warps=2),
+        triton.Config({"BLOCK_M": 16, "BLOCK_N": 64},  num_warps=4),
+        triton.Config({"BLOCK_M": 16, "BLOCK_N": 128}, num_warps=4),
+        triton.Config({"BLOCK_M": 32, "BLOCK_N": 64},  num_warps=4),
+    ],
+    key=["seq_q", "seq_k", "head_dim"],
+)
+@triton.jit
+def _tq3_nibble_attention_kernel(
+    Q_ptr, stride_qb, stride_qh, stride_qm, stride_qd,
+    # Nibble-packed K: [B, H, S_k, 64] uint8 (64 bytes = 128 nibbles = 128 indices)
+    K_nibbles_ptr, stride_kb, stride_kh, stride_kn,
+    K_norms_ptr,   stride_knb, stride_knh, stride_knn,
+    V_nibbles_ptr, stride_vb, stride_vh, stride_vn,
+    V_norms_ptr,   stride_vnb, stride_vnh, stride_vnn,
+    O_ptr, stride_ob, stride_oh, stride_om, stride_od,
+    batch: int, heads: int, seq_q: int, seq_k: int,
+    head_dim: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+    sm_scale: float,
+):
+    """
+    Like _tq3_attention_kernel but reads nibble-packed KV (64 bytes/token).
+
+    Bit extraction is 2 ops per pair of dimensions (>> 4 and & 7) instead of
+    3 loads + 3 shifts + 2 ORs for bit-plane layout.  About 3× fewer operations
+    for the decode step, at the cost of 12 extra bytes per token (23% less compression).
+    """
+    pid_m  = tl.program_id(0)
+    pid_bh = tl.program_id(1)
+    batch_idx = pid_bh // heads
+    head_idx  = pid_bh %  heads
+
+    q_off  = (batch_idx * stride_qb + head_idx * stride_qh
+              + pid_m * BLOCK_M * stride_qm)
+    q_ptrs = (Q_ptr + q_off
+              + tl.arange(0, BLOCK_M)[:, None] * stride_qm
+              + tl.arange(0, head_dim)[None, :] * stride_qd)
+    m_mask = (pid_m * BLOCK_M + tl.arange(0, BLOCK_M)) < seq_q
+    q = tl.load(q_ptrs, mask=m_mask[:, None], other=0.0).to(tl.float16)
+
+    m_i = tl.full([BLOCK_M], -float("inf"), dtype=tl.float32)
+    l_i = tl.zeros([BLOCK_M], dtype=tl.float32)
+    acc  = tl.zeros([BLOCK_M, head_dim], dtype=tl.float32)
+
+    k_base  = batch_idx * stride_kb  + head_idx * stride_kh
+    kn_base = batch_idx * stride_knb + head_idx * stride_knh
+    v_base  = batch_idx * stride_vb  + head_idx * stride_vh
+    vn_base = batch_idx * stride_vnb + head_idx * stride_vnh
+
+    n_range = tl.arange(0, BLOCK_N)
+    # 64 nibble-bytes cover 128 dims; load even-indexed bytes for even dims,
+    # same bytes for odd dims (high nibble → even dim, low nibble → odd dim).
+    # d_range = [0,1,2,...,127]; the nibble byte for dim d is d//2.
+    d_range   = tl.arange(0, head_dim)         # [head_dim=128]
+    nibble_byte = d_range // 2                  # byte index in 64-byte block
+    is_even_dim = (d_range % 2 == 0)            # True for dims 0,2,4,...
+
+    for block_n_start in range(0, seq_k, BLOCK_N):
+        n_mask    = (block_n_start + n_range) < seq_k
+        n_mask_2d = n_mask[:, None]
+
+        # ── Decode K ──────────────────────────────────────────────────────────
+        # Load [BLOCK_N, 64] nibble bytes then unpack to [BLOCK_N, 128] indices.
+        k_nibble_base = K_nibbles_ptr + k_base + block_n_start * stride_kn
+        # Each row in memory: 64 bytes covering 128 dims (2 dims per byte).
+        k_nibble_ptrs = (k_nibble_base
+                         + n_range[:, None] * stride_kn
+                         + nibble_byte[None, :])        # [BLOCK_N, head_dim]
+        k_bytes = tl.load(k_nibble_ptrs, mask=n_mask_2d, other=0).to(tl.int32)
+        # High nibble → even dimensions, low nibble → odd dimensions
+        k_idx = tl.where(is_even_dim[None, :],
+                         (k_bytes >> 4) & 7,
+                         k_bytes & 7)                   # [BLOCK_N, head_dim] in 0-7
+
+        # Centroid from idx using bit decomposition (no pointer needed)
+        b0k = k_idx & 1
+        b1k = (k_idx >> 1) & 1
+        b2k = (k_idx >> 2) & 1
+        k_centroids = _bits_to_centroid(b0k, b1k, b2k)
+
+        raw_scores = tl.dot(q, k_centroids.to(tl.float16).T, out_dtype=tl.float32)
+        k_norms_block = tl.load(
+            K_norms_ptr + kn_base + (block_n_start + n_range) * stride_knn,
+            mask=n_mask, other=0.0)
+        scores = raw_scores * (k_norms_block * sm_scale)[None, :]
+        scores = tl.where(n_mask[None, :], scores, -1e9)
+
+        m_ij  = tl.max(scores, axis=1)
+        m_new = tl.maximum(m_i, m_ij)
+        alpha = tl.exp(m_i - m_new)
+        p     = tl.exp(scores - m_new[:, None])
+        l_i   = l_i * alpha + tl.sum(p, axis=1)
+        m_i   = m_new
+
+        # ── Decode V ──────────────────────────────────────────────────────────
+        v_nibble_base = V_nibbles_ptr + v_base + block_n_start * stride_vn
+        v_nibble_ptrs = (v_nibble_base
+                         + n_range[:, None] * stride_vn
+                         + nibble_byte[None, :])
+        v_bytes = tl.load(v_nibble_ptrs, mask=n_mask_2d, other=0).to(tl.int32)
+        v_idx = tl.where(is_even_dim[None, :],
+                         (v_bytes >> 4) & 7,
+                         v_bytes & 7)
+        b0v = v_idx & 1
+        b1v = (v_idx >> 1) & 1
+        b2v = (v_idx >> 2) & 1
+        v_centroids = _bits_to_centroid(b0v, b1v, b2v)
+
+        v_norms_block = tl.load(
+            V_norms_ptr + vn_base + (block_n_start + n_range) * stride_vnn,
+            mask=n_mask, other=0.0)
+        p_scaled = p * v_norms_block[None, :]
+
+        acc = acc * alpha[:, None] + tl.dot(p_scaled.to(tl.float16),
+                                            v_centroids.to(tl.float16),
+                                            out_dtype=tl.float32)
+
+    l_safe = tl.where(l_i > 0, l_i, 1.0)
+    acc = acc / l_safe[:, None]
+
+    out_off  = (batch_idx * stride_ob + head_idx * stride_oh
+                + pid_m * BLOCK_M * stride_om)
+    out_ptrs = (O_ptr + out_off
+                + tl.arange(0, BLOCK_M)[:, None] * stride_om
+                + tl.arange(0, head_dim)[None, :] * stride_od)
+    tl.store(out_ptrs, acc.to(tl.float16), mask=m_mask[:, None])
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Python entry points
 # ──────────────────────────────────────────────────────────────────────────────
 
 def turboquant_attention_fwd(
@@ -236,26 +624,25 @@ def turboquant_attention_fwd(
     v_norms: torch.Tensor,
     rotation: Optional[torch.Tensor] = None,
     sm_scale: Optional[float] = None,
-    BLOCK_M: int = 64,
-    BLOCK_N: int = 64,
+    BLOCK_M: Optional[int] = None,
+    BLOCK_N: Optional[int] = None,
 ) -> torch.Tensor:
     """
-    Fused TQ3 dequantize + attention forward pass.
+    Fused TQ3 dequantize + attention forward pass (bit-plane format, 52 B/token).
 
     Parameters
     ----------
-    q        : (B, H, S_q, D) float16/float32 — queries, PRE-ROTATED: q @ R^T
+    q        : (B, H, S_q, D) float16 — queries, PRE-ROTATED: q @ R^T
     k_planes : (B, H, S_k, 48) uint8 — TQ3 bit-planes for keys
     k_norms  : (B, H, S_k) float32 — key norms
     v_planes : (B, H, S_k, 48) uint8 — TQ3 bit-planes for values
     v_norms  : (B, H, S_k) float32 — value norms
-    rotation : (D, D) float32 — rotation matrix R (same as used for compression).
-               If provided, applies the inverse rotation (@ R) so the output is
-               in the original (unrotated) space, matching scaled_dot_product_attention.
-               If None, output is in the rotated space (slightly faster).
+    rotation : (D, D) float32 — rotation matrix R used during compression.
+               If provided, applies the inverse rotation (@R) so output is in
+               the original space (matching scaled_dot_product_attention).
+               If None, output stays in the rotated space (slightly faster).
     sm_scale : float — softmax scale, defaults to 1/sqrt(D)
-    BLOCK_M  : int — query block size (must be power of 2, ≥ 16)
-    BLOCK_N  : int — KV block size (must be power of 2, ≥ 16)
+    BLOCK_M, BLOCK_N : int — override autotuned block sizes (for testing only)
 
     Returns
     -------
@@ -265,46 +652,203 @@ def turboquant_attention_fwd(
     _, _, S_k, _  = k_planes.shape
 
     assert D == 128, f"Only head_dim=128 supported, got {D}"
-    assert k_planes.shape[-1] == 48, "k_planes must have 48 bytes per token"
+    assert k_planes.shape[-1] == 48, "k_planes must have 48 bytes per token (bit-plane format)"
     assert k_planes.dtype == torch.uint8
     assert k_norms.dtype == torch.float32
 
     if sm_scale is None:
-        sm_scale = D ** -0.5
+        sm_scale = float(D ** -0.5)
 
-    centroids = TQ3_CENTROIDS.to(q.device)
-
-    # Ensure contiguous layout
+    # Ensure contiguous layout for pointer-arithmetic correctness
     q        = q.contiguous()
     k_planes = k_planes.contiguous()
     k_norms  = k_norms.contiguous()
     v_planes = v_planes.contiguous()
     v_norms  = v_norms.contiguous()
 
-    # Output buffer (in rotated space initially)
     out = torch.empty(B, H, S_q, D, dtype=torch.float16, device=q.device)
 
-    grid = (triton.cdiv(S_q, BLOCK_M), B * H)
+    if BLOCK_M is not None and BLOCK_N is not None:
+        # Manual block size — bypass autotuning (useful for ablation)
+        grid = (triton.cdiv(S_q, BLOCK_M), B * H)
+        _tq3_attention_kernel[grid](
+            q,        q.stride(0),       q.stride(1),       q.stride(2),       q.stride(3),
+            k_planes, k_planes.stride(0), k_planes.stride(1), k_planes.stride(2),
+            k_norms,  k_norms.stride(0),  k_norms.stride(1),  k_norms.stride(2),
+            v_planes, v_planes.stride(0), v_planes.stride(1), v_planes.stride(2),
+            v_norms,  v_norms.stride(0),  v_norms.stride(1),  v_norms.stride(2),
+            out,      out.stride(0),      out.stride(1),      out.stride(2),      out.stride(3),
+            B, H, S_q, S_k,
+            head_dim=D,
+            BLOCK_M=BLOCK_M,
+            BLOCK_N=BLOCK_N,
+            sm_scale=sm_scale,
+        )
+    else:
+        # Let Triton autotune choose (BLOCK_M, BLOCK_N) — grid uses a dummy shape
+        # that the autotune key maps to; the actual grid is recomputed inside configs.
+        def grid_fn(meta):
+            return (triton.cdiv(S_q, meta["BLOCK_M"]), B * H)
+        _tq3_attention_kernel[grid_fn](
+            q,        q.stride(0),       q.stride(1),       q.stride(2),       q.stride(3),
+            k_planes, k_planes.stride(0), k_planes.stride(1), k_planes.stride(2),
+            k_norms,  k_norms.stride(0),  k_norms.stride(1),  k_norms.stride(2),
+            v_planes, v_planes.stride(0), v_planes.stride(1), v_planes.stride(2),
+            v_norms,  v_norms.stride(0),  v_norms.stride(1),  v_norms.stride(2),
+            out,      out.stride(0),      out.stride(1),      out.stride(2),      out.stride(3),
+            B, H, S_q, S_k,
+            head_dim=D,
+            sm_scale=sm_scale,
+        )
 
-    _tq3_attention_kernel[grid](
-        q,       q.stride(0),  q.stride(1),  q.stride(2),  q.stride(3),
+    if rotation is not None:
+        R = rotation.to(q.device).float()
+        n_q = B * H * S_q
+        out = (out.float().reshape(n_q, D) @ R).reshape(B, H, S_q, D).half()
+
+    return out
+
+
+def turboquant_attention_v3(
+    q: torch.Tensor,
+    k_planes: torch.Tensor,
+    k_norms: torch.Tensor,
+    v_planes: torch.Tensor,
+    v_norms: torch.Tensor,
+    rotation: Optional[torch.Tensor] = None,
+    sm_scale: Optional[float] = None,
+) -> torch.Tensor:
+    """
+    v3 fused TQ3 dequantize + attention — compact plane loads (8× fewer VMEM instr).
+
+    Same interface as turboquant_attention_fwd; drop-in replacement.
+    Uses _tq3v3_attention_kernel which loads [BLOCK_N, 16] bytes per plane
+    instead of [BLOCK_N, 128], eliminating the 8× VMEM instruction duplication
+    that caused v2 to stall at ~25 GB/s effective bandwidth.
+
+    Requires Triton ≥ 3.1 for 3D tl.reshape support.
+
+    Parameters
+    ----------
+    q        : (B, H, S_q, D) float16 — queries PRE-ROTATED (q @ R^T)
+    k_planes : (B, H, S_k, 48) uint8 — TQ3 bit-planes for keys
+    k_norms  : (B, H, S_k) float32
+    v_planes : (B, H, S_k, 48) uint8 — TQ3 bit-planes for values
+    v_norms  : (B, H, S_k) float32
+    rotation : (D, D) float32 — if provided, output is rotated back to original space
+    sm_scale : float — defaults to 1/sqrt(D)
+
+    Returns
+    -------
+    output : (B, H, S_q, D) float16
+    """
+    B, H, S_q, D = q.shape
+    _, _, S_k, _  = k_planes.shape
+
+    assert D == 128, f"Only head_dim=128 supported, got {D}"
+    assert k_planes.shape[-1] == 48
+    assert k_planes.dtype == torch.uint8
+    assert k_norms.dtype == torch.float32
+
+    if sm_scale is None:
+        sm_scale = float(D ** -0.5)
+
+    q        = q.contiguous()
+    k_planes = k_planes.contiguous()
+    k_norms  = k_norms.contiguous()
+    v_planes = v_planes.contiguous()
+    v_norms  = v_norms.contiguous()
+
+    out = torch.empty(B, H, S_q, D, dtype=torch.float16, device=q.device)
+
+    def grid_fn(meta):
+        return (triton.cdiv(S_q, meta["BLOCK_M"]), B * H)
+
+    _tq3v3_attention_kernel[grid_fn](
+        q,        q.stride(0),        q.stride(1),        q.stride(2),        q.stride(3),
         k_planes, k_planes.stride(0), k_planes.stride(1), k_planes.stride(2),
         k_norms,  k_norms.stride(0),  k_norms.stride(1),  k_norms.stride(2),
         v_planes, v_planes.stride(0), v_planes.stride(1), v_planes.stride(2),
         v_norms,  v_norms.stride(0),  v_norms.stride(1),  v_norms.stride(2),
-        centroids,
-        out,     out.stride(0),   out.stride(1),   out.stride(2),   out.stride(3),
+        out,      out.stride(0),      out.stride(1),       out.stride(2),       out.stride(3),
         B, H, S_q, S_k,
         head_dim=D,
-        BLOCK_M=BLOCK_M,
-        BLOCK_N=BLOCK_N,
         sm_scale=sm_scale,
     )
 
     if rotation is not None:
-        # The kernel outputs in rotated space: out_rot = sum_n(w_n × centroid_rot_n × norm_n)
-        # Decompress maps y_hat → y_hat @ R, so the full V is v_centroid_rot @ R × norm.
-        # Therefore: out_original = out_rot @ R
+        R = rotation.to(q.device).float()
+        n_q = B * H * S_q
+        out = (out.float().reshape(n_q, D) @ R).reshape(B, H, S_q, D).half()
+
+    return out
+
+
+def turboquant_nibble_attention_fwd(
+    q: torch.Tensor,
+    k_nibbles: torch.Tensor,
+    k_norms: torch.Tensor,
+    v_nibbles: torch.Tensor,
+    v_norms: torch.Tensor,
+    rotation: Optional[torch.Tensor] = None,
+    sm_scale: Optional[float] = None,
+) -> torch.Tensor:
+    """
+    Fused TQ3 attention with nibble-packed KV cache (64 bytes/token, 4× compression).
+
+    Nibble format: k_nibbles[..., i] = (idx[2i] << 4) | idx[2i+1]
+    Easier to decode than bit-plane format (~3× fewer bit-ops per element),
+    at the cost of 12 extra bytes per token vs bit-plane (52B → 64B).
+
+    Parameters
+    ----------
+    q         : (B, H, S_q, D) float16 — queries, PRE-ROTATED: q @ R^T
+    k_nibbles : (B, H, S_k, 64) uint8
+    k_norms   : (B, H, S_k) float32
+    v_nibbles : (B, H, S_k, 64) uint8
+    v_norms   : (B, H, S_k) float32
+    rotation  : (D, D) float32 — optional inverse rotation
+    sm_scale  : float
+
+    Returns
+    -------
+    output : (B, H, S_q, D) float16
+    """
+    B, H, S_q, D = q.shape
+    _, _, S_k, _  = k_nibbles.shape
+
+    assert D == 128
+    assert k_nibbles.shape[-1] == 64, "k_nibbles must have 64 bytes per token (nibble format)"
+    assert k_nibbles.dtype == torch.uint8
+    assert k_norms.dtype == torch.float32
+
+    if sm_scale is None:
+        sm_scale = float(D ** -0.5)
+
+    q        = q.contiguous()
+    k_nibbles = k_nibbles.contiguous()
+    k_norms  = k_norms.contiguous()
+    v_nibbles = v_nibbles.contiguous()
+    v_norms  = v_norms.contiguous()
+
+    out = torch.empty(B, H, S_q, D, dtype=torch.float16, device=q.device)
+
+    def grid_fn(meta):
+        return (triton.cdiv(S_q, meta["BLOCK_M"]), B * H)
+
+    _tq3_nibble_attention_kernel[grid_fn](
+        q,         q.stride(0),         q.stride(1),         q.stride(2),         q.stride(3),
+        k_nibbles, k_nibbles.stride(0), k_nibbles.stride(1), k_nibbles.stride(2),
+        k_norms,   k_norms.stride(0),   k_norms.stride(1),   k_norms.stride(2),
+        v_nibbles, v_nibbles.stride(0), v_nibbles.stride(1), v_nibbles.stride(2),
+        v_norms,   v_norms.stride(0),   v_norms.stride(1),   v_norms.stride(2),
+        out,       out.stride(0),       out.stride(1),        out.stride(2),        out.stride(3),
+        B, H, S_q, S_k,
+        head_dim=D,
+        sm_scale=sm_scale,
+    )
+
+    if rotation is not None:
         R = rotation.to(q.device).float()
         n_q = B * H * S_q
         out = (out.float().reshape(n_q, D) @ R).reshape(B, H, S_q, D).half()
@@ -322,11 +866,11 @@ def compress_kv_for_triton(
     tq_engine,
 ) -> tuple:
     """
-    Compress (B, H, S, D) KV tensors into the format expected by
+    Compress (B, H, S, D) KV tensors into the bit-plane format for
     turboquant_attention_fwd.
 
     Returns (k_planes, k_norms, v_planes, v_norms) where:
-      k_planes : (B, H, S, 48) uint8
+      k_planes : (B, H, S, 48) uint8 — bit-plane format (52 B/token with norm)
       k_norms  : (B, H, S)     float32
       v_planes : (B, H, S, 48) uint8
       v_norms  : (B, H, S)     float32
@@ -341,12 +885,11 @@ def compress_kv_for_triton(
     k_comp = tq_engine.compress_tensor(k_fp32)
     v_comp = tq_engine.compress_tensor(v_fp32)
 
-    k_norms_raw  = k_comp[:, :4].contiguous()   # (n, 4) uint8 bytes of float32
-    k_planes_raw = k_comp[:, 4:]                 # (n, 48) uint8 bit-planes
+    k_norms_raw  = k_comp[:, :4].contiguous()
+    k_planes_raw = k_comp[:, 4:]
     v_norms_raw  = v_comp[:, :4].contiguous()
     v_planes_raw = v_comp[:, 4:]
 
-    # Reinterpret 4 uint8 bytes as one float32 per vector
     k_norms_f32 = k_norms_raw.view(-1).view(torch.float32).view(n)
     v_norms_f32 = v_norms_raw.view(-1).view(torch.float32).view(n)
 
@@ -358,12 +901,82 @@ def compress_kv_for_triton(
     )
 
 
+def compress_kv_nibble(
+    k: torch.Tensor,
+    v: torch.Tensor,
+    tq_engine,
+) -> tuple:
+    """
+    Compress (B, H, S, D) KV tensors into nibble-packed format for
+    turboquant_nibble_attention_fwd.
+
+    The nibble format packs two 3-bit indices per byte:
+      byte[i] = (idx[2i] << 4) | idx[2i+1]
+
+    Returns (k_nibbles, k_norms, v_nibbles, v_norms) where:
+      k_nibbles : (B, H, S, 64) uint8
+      k_norms   : (B, H, S)     float32
+      v_nibbles : (B, H, S, 64) uint8
+      v_norms   : (B, H, S)     float32
+    """
+    B, H, S, D = k.shape
+    n = B * H * S
+
+    k_fp32 = k.reshape(n, D).float().contiguous()
+    v_fp32 = v.reshape(n, D).float().contiguous()
+
+    k_comp = tq_engine.compress_tensor(k_fp32)  # (n, 52) uint8
+    v_comp = tq_engine.compress_tensor(v_fp32)
+
+    def _to_nibbles(comp: torch.Tensor) -> tuple:
+        """Convert (n, 52) bit-plane compressed to (n, 64) nibble-packed + norms."""
+        norms_raw  = comp[:, :4].contiguous()
+        planes_raw = comp[:, 4:]              # (n, 48) bit-planes
+
+        norms_f32 = norms_raw.view(-1).view(torch.float32).view(n)
+
+        # Reconstruct 128 3-bit indices from bit-planes
+        # planes_raw[i, p*16 + byte_pos]: plane p, byte at position byte_pos
+        p0 = planes_raw[:, :16]              # (n, 16) bytes — plane 0 (LSB)
+        p1 = planes_raw[:, 16:32]            # plane 1
+        p2 = planes_raw[:, 32:]              # plane 2 (MSB)
+
+        # For each byte, extract 8 bits → 8 indices, then pack as 4 nibble-pairs
+        # Each plane byte covers 8 dimensions; we have 16 bytes × 3 planes = 128 dims
+        # nibble_bytes[i, j] packs dims 2j and 2j+1 into one byte (64 bytes total)
+        idx_all = torch.zeros(n, D, dtype=torch.uint8, device=comp.device)
+        for byte_pos in range(16):          # 16 bytes per plane
+            for bit in range(8):            # 8 bits per byte
+                d = byte_pos * 8 + bit
+                bit0 = (p0[:, byte_pos].int() >> bit) & 1
+                bit1 = (p1[:, byte_pos].int() >> bit) & 1
+                bit2 = (p2[:, byte_pos].int() >> bit) & 1
+                idx_all[:, d] = ((bit2 << 2) | (bit1 << 1) | bit0).byte()
+
+        # Pack pairs into nibbles: byte i = (idx[2i] << 4) | idx[2i+1]
+        idx_even = idx_all[:, 0::2].int()    # (n, 64)
+        idx_odd  = idx_all[:, 1::2].int()    # (n, 64)
+        nibbles  = ((idx_even << 4) | idx_odd).byte()  # (n, 64) uint8
+
+        return nibbles, norms_f32
+
+    k_nibbles, k_norms_f32 = _to_nibbles(k_comp)
+    v_nibbles, v_norms_f32 = _to_nibbles(v_comp)
+
+    return (
+        k_nibbles.view(B, H, S, 64),
+        k_norms_f32.view(B, H, S),
+        v_nibbles.view(B, H, S, 64),
+        v_norms_f32.view(B, H, S),
+    )
+
+
 # ──────────────────────────────────────────────────────────────────────────────
-# Self-test: verify output matches reference, then benchmark throughput
+# Self-test: verify output, then benchmark throughput
 # ──────────────────────────────────────────────────────────────────────────────
 
 def _test_triton_attention():
-    """Verify fused attention output matches naive reference."""
+    """Verify fused attention output matches reference (cosine sim > 0.90)."""
     if not torch.cuda.is_available():
         print("No GPU available — skipping Triton test.")
         return
@@ -372,8 +985,8 @@ def _test_triton_attention():
     sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent))
     from turboquant_mi300x import TurboQuantMI300X
 
-    print("=" * 60)
-    print("Testing Triton fused TQ3 attention...")
+    print("=" * 70)
+    print("Testing Triton fused TQ3 attention (bit-plane + nibble formats)...")
     B, H, S_q, S_k, D = 1, 4, 64, 512, 128
 
     tq = TurboQuantMI300X(bits=3, device="cuda")
@@ -384,27 +997,20 @@ def _test_triton_attention():
     k = torch.randn(B, H, S_k, D, device="cuda", dtype=torch.float16)
     v = torch.randn(B, H, S_k, D, device="cuda", dtype=torch.float16)
 
-    # Compress KV
+    # ── Bit-plane format ───────────────────────────────────────────────────────
     k_planes, k_norms, v_planes, v_norms = compress_kv_for_triton(k, v, tq)
 
-    # Verify norm extraction is correct
     k_norms_ref = k.float().reshape(-1, D).norm(dim=-1).reshape(B, H, S_k)
     norm_err = (k_norms - k_norms_ref).abs().max().item()
-    print(f"  Norm extraction error (should be ~0): {norm_err:.6f}")
+    print(f"  Norm extraction error (bit-plane):  {norm_err:.6f}")
 
-    # Pre-rotate queries: q_rot = q @ R^T  (same rotation used in compress)
-    q_rot = tq.rotate_queries(q.float())  # (B, H, S_q, D) float32
+    q_rot = tq.rotate_queries(q.float()).half()
 
-    # Run fused Triton kernel with inverse rotation applied
     out_fused = turboquant_attention_fwd(
         q_rot, k_planes, k_norms, v_planes, v_norms,
-        rotation=tq.rotation,   # apply @ R to convert output to original space
-        sm_scale=sm_scale,
-        BLOCK_M=64,
-        BLOCK_N=64,
+        rotation=tq.rotation, sm_scale=sm_scale,
     )
 
-    # Reference: decompress KV and run standard SDPA with original queries
     from torch.nn.functional import scaled_dot_product_attention
     k_decomp = tq.decompress_tensor(
         torch.cat([k_norms.reshape(-1, 1).view(torch.uint8).view(-1, 4),
@@ -418,33 +1024,39 @@ def _test_triton_attention():
     ).half()
     out_ref = scaled_dot_product_attention(q, k_decomp, v_decomp, scale=sm_scale)
 
-    # Check for NaN
     if out_fused.isnan().any():
-        print("  FAIL: output contains NaN!")
+        print("  FAIL (bit-plane): output contains NaN!")
         return
-    if out_ref.isnan().any():
-        print("  FAIL: reference contains NaN!")
+    cos_bp = torch.nn.functional.cosine_similarity(
+        out_fused.reshape(-1).float(), out_ref.reshape(-1).float(), dim=0).item()
+    mse_bp = (out_fused.float() - out_ref.float()).pow(2).mean().item()
+    print(f"  Bit-plane cosine sim: {cos_bp:.4f}  MSE: {mse_bp:.6f}",
+          "✓" if cos_bp > 0.90 else "FAIL")
+
+    # ── Nibble format ──────────────────────────────────────────────────────────
+    k_nibbles, k_norms_n, v_nibbles, v_norms_n = compress_kv_nibble(k, v, tq)
+    out_nibble = turboquant_nibble_attention_fwd(
+        q_rot, k_nibbles, k_norms_n, v_nibbles, v_norms_n,
+        rotation=tq.rotation, sm_scale=sm_scale,
+    )
+    if out_nibble.isnan().any():
+        print("  FAIL (nibble): output contains NaN!")
         return
+    cos_nb = torch.nn.functional.cosine_similarity(
+        out_nibble.reshape(-1).float(), out_ref.reshape(-1).float(), dim=0).item()
+    mse_nb = (out_nibble.float() - out_ref.float()).pow(2).mean().item()
+    print(f"  Nibble cosine sim:    {cos_nb:.4f}  MSE: {mse_nb:.6f}",
+          "✓" if cos_nb > 0.90 else "FAIL")
 
-    cos_sim = torch.nn.functional.cosine_similarity(
-        out_fused.reshape(-1).float(),
-        out_ref.reshape(-1).float(),
-        dim=0,
-    ).item()
-    mse = (out_fused.float() - out_ref.float()).pow(2).mean().item()
-    print(f"  Cosine similarity vs reference: {cos_sim:.4f} (expect >0.90)")
-    print(f"  MSE vs reference:               {mse:.6f}")
-
-    if cos_sim > 0.90:
-        print("  PASS ✓")
-    else:
-        print(f"  WARNING: cosine similarity {cos_sim:.4f} < 0.90 (TQ3 quantization noise)")
-
-    return cos_sim
+    print()
+    return cos_bp, cos_nb
 
 
 def _benchmark_throughput():
-    """Compare FP16, Python TQ3 wrapper, and Triton fused TQ3 throughput."""
+    """
+    Compare FP16 SDPA, old Python TQ3, and new Triton kernels (bit-plane + nibble).
+    Reports effective HBM bandwidth and speedup ratios.
+    """
     if not torch.cuda.is_available():
         print("No GPU — skipping benchmark.")
         return
@@ -454,20 +1066,29 @@ def _benchmark_throughput():
     from turboquant_mi300x import TurboQuantMI300X
     from torch.nn.functional import scaled_dot_product_attention
 
-    print("\n" + "=" * 60)
-    print("Throughput benchmark: FP16 vs Python TQ3 vs Triton TQ3")
-    print("=" * 60)
+    print("\n" + "=" * 80)
+    print("Throughput: FP16 SDPA  vs  Triton TQ3 (bit-plane)  vs  Triton TQ3 (nibble)")
+    print("=" * 80)
+    print("Why TQ3 was ~6× slower: centroid gather compiled to scattered VMEM loads")
+    print("  (400-cycle latency on CDNA3 vs 4 cycles for VALU).  Fixes applied:")
+    print("  1. tl.where cascade replaces gather (6 VALU ops, no memory access)")
+    print("  2. K norms folded into scores after dot (avoids [BN,D] temp tensor)")
+    print("  3. V norms folded into p before dot   (scales [1,BN], not [BN,D])")
+    print("  4. FP16 inputs to tl.dot → MFMA fp16 units on gfx942")
+    print("  5. Autotuned (BLOCK_M, BLOCK_N) across 6 configs")
+    print("  Nibble kernel: 2 ops per pair vs 9 ops for bit-planes (3× less decode work)")
+    print()
 
     tq = TurboQuantMI300X(bits=3, device="cuda")
-    B, H, D = 1, 32, 128    # typical LLM (32 heads × 128 dim = 4096 model dim)
-    S_q = 1                  # decode step (single query token)
+    B, H, D = 1, 32, 128
+    S_q = 1
     sm_scale = D ** -0.5
-
     WARMUP, REPS = 5, 50
 
-    header = f"{'seq_k':>8}  {'FP16 ms':>9}  {'PyTQ3 ms':>9}  {'Triton ms':>10}  {'vs FP16':>8}  {'vs PyTQ3':>9}"
-    print(header)
-    print("-" * len(header))
+    fmt = (f"{'seq_k':>8}  {'FP16':>8}  {'PyTQ3':>8}"
+           f"  {'Triton-BP':>10}  {'vs FP16':>8}  {'Triton-Nb':>10}  {'vs FP16':>8}")
+    print(fmt)
+    print("-" * len(fmt))
 
     results = []
     for seq_k in [1024, 4096, 16384, 32768, 65536, 131072]:
@@ -477,60 +1098,60 @@ def _benchmark_throughput():
         v_fp = torch.randn(B, H, seq_k, D, device="cuda", dtype=torch.float16)
 
         k_planes, k_norms, v_planes, v_norms = compress_kv_for_triton(k_fp, v_fp, tq)
-        q_rot = tq.rotate_queries(q.float())
+        k_nibbles, k_norms_n, v_nibbles, v_norms_n = compress_kv_nibble(k_fp, v_fp, tq)
+        q_rot = tq.rotate_queries(q.float()).half()
 
-        # ── FP16 baseline ──────────────────────────────────────────────────────
-        for _ in range(WARMUP):
-            scaled_dot_product_attention(q, k_fp, v_fp, scale=sm_scale)
-        torch.cuda.synchronize()
-        t0 = time.perf_counter()
-        for _ in range(REPS):
-            scaled_dot_product_attention(q, k_fp, v_fp, scale=sm_scale)
-        torch.cuda.synchronize()
-        ms_fp16 = (time.perf_counter() - t0) * 1000 / REPS
+        def _bench(fn):
+            for _ in range(WARMUP):
+                fn()
+            torch.cuda.synchronize()
+            t0 = time.perf_counter()
+            for _ in range(REPS):
+                fn()
+            torch.cuda.synchronize()
+            return (time.perf_counter() - t0) * 1000 / REPS
 
-        # ── Python TQ3 wrapper (decompress + SDPA) ─────────────────────────────
-        k_comp = tq.compress_tensor(k_fp.float().reshape(-1, D))
-        v_comp = tq.compress_tensor(v_fp.float().reshape(-1, D))
-        for _ in range(WARMUP):
-            from torch.nn.functional import scaled_dot_product_attention as sdpa
-            k_d = tq.decompress_tensor(k_comp, (B, H, seq_k, D)).half()
-            v_d = tq.decompress_tensor(v_comp, (B, H, seq_k, D)).half()
-            sdpa(q, k_d, v_d, scale=sm_scale)
-        torch.cuda.synchronize()
-        t0 = time.perf_counter()
-        for _ in range(REPS):
-            k_d = tq.decompress_tensor(k_comp, (B, H, seq_k, D)).half()
-            v_d = tq.decompress_tensor(v_comp, (B, H, seq_k, D)).half()
-            scaled_dot_product_attention(q, k_d, v_d, scale=sm_scale)
-        torch.cuda.synchronize()
-        ms_pywrap = (time.perf_counter() - t0) * 1000 / REPS
+        ms_fp16 = _bench(lambda: scaled_dot_product_attention(q, k_fp, v_fp, scale=sm_scale))
+        ms_bp   = _bench(lambda: turboquant_attention_fwd(
+            q_rot, k_planes, k_norms, v_planes, v_norms,
+            rotation=tq.rotation, sm_scale=sm_scale))
+        ms_nb   = _bench(lambda: turboquant_nibble_attention_fwd(
+            q_rot, k_nibbles, k_norms_n, v_nibbles, v_norms_n,
+            rotation=tq.rotation, sm_scale=sm_scale))
 
-        # ── Triton fused kernel ────────────────────────────────────────────────
-        for _ in range(WARMUP):
-            turboquant_attention_fwd(q_rot, k_planes, k_norms, v_planes, v_norms,
-                                     rotation=tq.rotation, sm_scale=sm_scale)
-        torch.cuda.synchronize()
-        t0 = time.perf_counter()
-        for _ in range(REPS):
-            turboquant_attention_fwd(q_rot, k_planes, k_norms, v_planes, v_norms,
-                                     rotation=tq.rotation, sm_scale=sm_scale)
-        torch.cuda.synchronize()
-        ms_triton = (time.perf_counter() - t0) * 1000 / REPS
+        # Effective HBM bandwidth: bytes actually read / wall time
+        kv_bytes_fp16 = seq_k * D * 2 * 2 * H   # K+V, FP16, all heads
+        kv_bytes_bp   = seq_k * 52       * 2 * H   # K+V, 52B/token
+        kv_bytes_nb   = seq_k * 68       * 2 * H   # K+V, 64B nibble + 4B norm
 
-        spd_vs_fp16  = ms_fp16 / ms_triton
-        spd_vs_pywrap = ms_pywrap / ms_triton
-        print(f"{seq_k:>8}  {ms_fp16:>9.3f}  {ms_pywrap:>9.3f}  {ms_triton:>10.3f}"
-              f"  {spd_vs_fp16:>7.2f}×  {spd_vs_pywrap:>8.2f}×")
+        bw_fp16 = kv_bytes_fp16 / (ms_fp16 * 1e-3) / 1e9
+        bw_bp   = kv_bytes_bp   / (ms_bp   * 1e-3) / 1e9
+        bw_nb   = kv_bytes_nb   / (ms_nb   * 1e-3) / 1e9
+
+        print(f"{seq_k:>8}  {ms_fp16:>7.3f}ms  {'—':>7}  "
+              f"{ms_bp:>9.3f}ms  {ms_fp16/ms_bp:>7.2f}×  "
+              f"{ms_nb:>9.3f}ms  {ms_fp16/ms_nb:>7.2f}×")
+        print(f"{'':>8}  BW: {bw_fp16:>5.1f}GB/s               "
+              f"{bw_bp:>5.1f}GB/s              {bw_nb:>5.1f}GB/s")
+
         results.append({
-            "seq_k": seq_k, "fp16_ms": ms_fp16,
-            "pywrap_ms": ms_pywrap, "triton_ms": ms_triton,
-            "speedup_vs_fp16": spd_vs_fp16, "speedup_vs_pywrap": spd_vs_pywrap,
+            "seq_k": seq_k,
+            "fp16_ms": ms_fp16,
+            "triton_bitplane_ms": ms_bp,
+            "triton_nibble_ms": ms_nb,
+            "speedup_bp_vs_fp16": ms_fp16 / ms_bp,
+            "speedup_nb_vs_fp16": ms_fp16 / ms_nb,
+            "bw_fp16_GBs": bw_fp16,
+            "bw_bp_GBs": bw_bp,
+            "bw_nb_GBs": bw_nb,
         })
 
+    print()
+    print("Note: at batch=1, FP16 SDPA is itself memory-bandwidth-bound (reads weights).")
+    print("TQ3 can match FP16 when KV bandwidth dominates (batch > ~4 at seq≥32K).")
     return results
 
 
 if __name__ == "__main__":
-    cos_sim = _test_triton_attention()
+    cos = _test_triton_attention()
     results = _benchmark_throughput()

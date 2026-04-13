@@ -1,0 +1,202 @@
+[
+  {
+    "method": "fp16",
+    "bits": 0,
+    "context_len": 4096,
+    "n_trials": 20,
+    "pass_rate": 1.0,
+    "avg_rank": 1.0,
+    "avg_cos_sim": 1.0000000149011612,
+    "synthetic": true
+  },
+  {
+    "method": "fp16",
+    "bits": 0,
+    "context_len": 16384,
+    "n_trials": 20,
+    "pass_rate": 1.0,
+    "avg_rank": 1.0,
+    "avg_cos_sim": 0.9999999970197677,
+    "synthetic": true
+  },
+  {
+    "method": "fp16",
+    "bits": 0,
+    "context_len": 32768,
+    "n_trials": 20,
+    "pass_rate": 1.0,
+    "avg_rank": 1.0,
+    "avg_cos_sim": 1.000000011920929,
+    "synthetic": true
+  },
+  {
+    "method": "fp16",
+    "bits": 0,
+    "context_len": 65536,
+    "n_trials": 20,
+    "pass_rate": 1.0,
+    "avg_rank": 1.0,
+    "avg_cos_sim": 0.9999999880790711,
+    "synthetic": true
+  },
+  {
+    "method": "planar",
+    "bits": 3,
+    "context_len": 4096,
+    "n_trials": 20,
+    "pass_rate": 1.0,
+    "avg_rank": 1.0,
+    "avg_cos_sim": 0.9836870163679123,
+    "synthetic": true
+  },
+  {
+    "method": "planar",
+    "bits": 3,
+    "context_len": 16384,
+    "n_trials": 20,
+    "pass_rate": 1.0,
+    "avg_rank": 1.0,
+    "avg_cos_sim": 0.9831856191158295,
+    "synthetic": true
+  },
+  {
+    "method": "planar",
+    "bits": 3,
+    "context_len": 32768,
+    "n_trials": 20,
+    "pass_rate": 1.0,
+    "avg_rank": 1.0,
+    "avg_cos_sim": 0.9834109365940094,
+    "synthetic": true
+  },
+  {
+    "method": "planar",
+    "bits": 3,
+    "context_len": 65536,
+    "n_trials": 20,
+    "pass_rate": 1.0,
+    "avg_rank": 1.0,
+    "avg_cos_sim": 0.9834044307470322,
+    "synthetic": true
+  },
+  {
+    "method": "iso",
+    "bits": 3,
+    "context_len": 4096,
+    "n_trials": 20,
+    "pass_rate": 1.0,
+    "avg_rank": 1.0,
+    "avg_cos_sim": 0.9834423780441284,
+    "synthetic": true
+  },
+  {
+    "method": "iso",
+    "bits": 3,
+    "context_len": 16384,
+    "n_trials": 20,
+    "pass_rate": 1.0,
+    "avg_rank": 1.0,
+    "avg_cos_sim": 0.9837657898664475,
+    "synthetic": true
+  },
+  {
+    "method": "iso",
+    "bits": 3,
+    "context_len": 32768,
+    "n_trials": 20,
+    "pass_rate": 1.0,
+    "avg_rank": 1.0,
+    "avg_cos_sim": 0.982923224568367,
+    "synthetic": true
+  },
+  {
+    "method": "iso",
+    "bits": 3,
+    "context_len": 65536,
+    "n_trials": 20,
+    "pass_rate": 1.0,
+    "avg_rank": 1.0,
+    "avg_cos_sim": 0.9829120248556137,
+    "synthetic": true
+  },
+  {
+    "method": "rotor",
+    "bits": 3,
+    "context_len": 4096,
+    "n_trials": 20,
+    "pass_rate": 1.0,
+    "avg_rank": 1.0,
+    "avg_cos_sim": 0.9821311682462692,
+    "synthetic": true
+  },
+  {
+    "method": "rotor",
+    "bits": 3,
+    "context_len": 16384,
+    "n_trials": 20,
+    "pass_rate": 1.0,
+    "avg_rank": 1.0,
+    "avg_cos_sim": 0.9821374088525772,
+    "synthetic": true
+  },
+  {
+    "method": "rotor",
+    "bits": 3,
+    "context_len": 32768,
+    "n_trials": 20,
+    "pass_rate": 1.0,
+    "avg_rank": 1.0,
+    "avg_cos_sim": 0.981942355632782,
+    "synthetic": true
+  },
+  {
+    "method": "rotor",
+    "bits": 3,
+    "context_len": 65536,
+    "n_trials": 20,
+    "pass_rate": 1.0,
+    "avg_rank": 1.0,
+    "avg_cos_sim": 0.9828080058097839,
+    "synthetic": true
+  },
+  {
+    "method": "turbo",
+    "bits": 3,
+    "context_len": 4096,
+    "n_trials": 20,
+    "pass_rate": 1.0,
+    "avg_rank": 1.0,
+    "avg_cos_sim": 0.9831587463617325,
+    "synthetic": true
+  },
+  {
+    "method": "turbo",
+    "bits": 3,
+    "context_len": 16384,
+    "n_trials": 20,
+    "pass_rate": 1.0,
+    "avg_rank": 1.0,
+    "avg_cos_sim": 0.9821917951107025,
+    "synthetic": true
+  },
+  {
+    "method": "turbo",
+    "bits": 3,
+    "context_len": 32768,
+    "n_trials": 20,
+    "pass_rate": 1.0,
+    "avg_rank": 1.0,
+    "avg_cos_sim": 0.9811090797185897,
+    "synthetic": true
+  },
+  {
+    "method": "turbo",
+    "bits": 3,
+    "context_len": 65536,
+    "n_trials": 20,
+    "pass_rate": 1.0,
+    "avg_rank": 1.0,
+    "avg_cos_sim": 0.9826042652130127,
+    "synthetic": true
+  }
+]

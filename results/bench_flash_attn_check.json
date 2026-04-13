@@ -1,0 +1,109 @@
+{
+  "device": "AMD Instinct MI300X VF",
+  "mi300x_peak_gbs": 5300.0,
+  "B": 1,
+  "H": 32,
+  "D": 128,
+  "S_q": 1,
+  "dispatch_check": {
+    "pytorch_version": "2.5.1+rocm6.2",
+    "rocm_build": true,
+    "rocm_version": "6.2.41133-dd7f95766",
+    "flash_attn_installed": false,
+    "flash_attn_version": null,
+    "flash_sdp_enabled": true,
+    "math_sdp_enabled": true,
+    "mem_efficient_sdp_enabled": true,
+    "cudnn_sdp_enabled": true,
+    "env_vars": {
+      "ROCM_USE_FLASH_ATTN_V2": null,
+      "PYTORCH_ROCM_FLASH_ATTN_VERSION": null,
+      "ROCBLAS_LAYER": null,
+      "HIP_VISIBLE_DEVICES": null,
+      "ROCR_VISIBLE_DEVICES": null,
+      "GPU_MAX_HW_QUEUES": null,
+      "PYTORCH_NO_HIPBLASLT": null
+    }
+  },
+  "sdpa_vs_bmm": [
+    {
+      "seq_len": 512,
+      "sdpa_ms": 0.0289,
+      "sdpa_gbs": 290.7,
+      "sdpa_pct_peak": 5.49,
+      "bmm_ms": 0.0697,
+      "bmm_gbs": 120.3,
+      "sdpa_speedup": 2.416
+    },
+    {
+      "seq_len": 1024,
+      "sdpa_ms": 0.05,
+      "sdpa_gbs": 335.6,
+      "sdpa_pct_peak": 6.33,
+      "bmm_ms": 0.0698,
+      "bmm_gbs": 240.2,
+      "sdpa_speedup": 1.397
+    },
+    {
+      "seq_len": 4096,
+      "sdpa_ms": 0.1864,
+      "sdpa_gbs": 360.0,
+      "sdpa_pct_peak": 6.79,
+      "bmm_ms": 0.0695,
+      "bmm_gbs": 964.9,
+      "sdpa_speedup": 0.373
+    },
+    {
+      "seq_len": 8192,
+      "sdpa_ms": 0.3655,
+      "sdpa_gbs": 367.3,
+      "sdpa_pct_peak": 6.93,
+      "bmm_ms": 0.0779,
+      "bmm_gbs": 1723.6,
+      "sdpa_speedup": 0.213
+    },
+    {
+      "seq_len": 32768,
+      "sdpa_ms": 1.5297,
+      "sdpa_gbs": 351.0,
+      "sdpa_pct_peak": 6.62,
+      "bmm_ms": 0.2139,
+      "bmm_gbs": 2510.0,
+      "sdpa_speedup": 0.14
+    },
+    {
+      "seq_len": 65536,
+      "sdpa_ms": 3.0567,
+      "sdpa_gbs": 351.3,
+      "sdpa_pct_peak": 6.63,
+      "bmm_ms": 0.4053,
+      "bmm_gbs": 2649.4,
+      "sdpa_speedup": 0.133
+    },
+    {
+      "seq_len": 131072,
+      "sdpa_ms": 6.104,
+      "sdpa_gbs": 351.8,
+      "sdpa_pct_peak": 6.64,
+      "bmm_ms": 0.6997,
+      "bmm_gbs": 3069.0,
+      "sdpa_speedup": 0.115
+    }
+  ],
+  "causal_vs_noncausal": [
+    {
+      "seq_len": 4096,
+      "causal_ms": 0.0099,
+      "noncausal_ms": 0.1884,
+      "ratio_c_over_nc": 0.0524,
+      "timing_differs": true
+    },
+    {
+      "seq_len": 32768,
+      "causal_ms": 0.0093,
+      "noncausal_ms": 1.5331,
+      "ratio_c_over_nc": 0.0061,
+      "timing_differs": true
+    }
+  ]
+}

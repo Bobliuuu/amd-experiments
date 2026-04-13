@@ -1,0 +1,197 @@
+{
+  "standalone": [
+    {
+      "method": "fp16",
+      "bits": 0,
+      "seq_len": 512,
+      "compress_time_ms": 0.0,
+      "compress_toks_per_sec": Infinity,
+      "note": "No KV compression in FP16"
+    },
+    {
+      "method": "fp16",
+      "bits": 0,
+      "seq_len": 2048,
+      "compress_time_ms": 0.0,
+      "compress_toks_per_sec": Infinity,
+      "note": "No KV compression in FP16"
+    },
+    {
+      "method": "fp16",
+      "bits": 0,
+      "seq_len": 8192,
+      "compress_time_ms": 0.0,
+      "compress_toks_per_sec": Infinity,
+      "note": "No KV compression in FP16"
+    },
+    {
+      "method": "fp16",
+      "bits": 0,
+      "seq_len": 32768,
+      "compress_time_ms": 0.0,
+      "compress_toks_per_sec": Infinity,
+      "note": "No KV compression in FP16"
+    },
+    {
+      "method": "planar",
+      "bits": 3,
+      "seq_len": 512,
+      "compress_time_ms": 3.0315479962155223,
+      "compress_toks_per_sec": 168890.61319140016,
+      "n_layers": 32,
+      "n_kv_heads": 8,
+      "head_dim": 128
+    },
+    {
+      "method": "planar",
+      "bits": 3,
+      "seq_len": 2048,
+      "compress_time_ms": 3.290868000476621,
+      "compress_toks_per_sec": 622328.2124057802,
+      "n_layers": 32,
+      "n_kv_heads": 8,
+      "head_dim": 128
+    },
+    {
+      "method": "planar",
+      "bits": 3,
+      "seq_len": 8192,
+      "compress_time_ms": 7.556413998827338,
+      "compress_toks_per_sec": 1084112.1200176827,
+      "n_layers": 32,
+      "n_kv_heads": 8,
+      "head_dim": 128
+    },
+    {
+      "method": "planar",
+      "bits": 3,
+      "seq_len": 32768,
+      "compress_time_ms": 29.112643998814747,
+      "compress_toks_per_sec": 1125559.0526691452,
+      "n_layers": 32,
+      "n_kv_heads": 8,
+      "head_dim": 128
+    },
+    {
+      "method": "iso",
+      "bits": 3,
+      "seq_len": 512,
+      "compress_time_ms": 2.6039330041385256,
+      "compress_toks_per_sec": 196625.64251317517,
+      "n_layers": 32,
+      "n_kv_heads": 8,
+      "head_dim": 128
+    },
+    {
+      "method": "iso",
+      "bits": 3,
+      "seq_len": 2048,
+      "compress_time_ms": 3.186363996064756,
+      "compress_toks_per_sec": 642738.8718079084,
+      "n_layers": 32,
+      "n_kv_heads": 8,
+      "head_dim": 128
+    },
+    {
+      "method": "iso",
+      "bits": 3,
+      "seq_len": 8192,
+      "compress_time_ms": 9.518680999462958,
+      "compress_toks_per_sec": 860623.4414686437,
+      "n_layers": 32,
+      "n_kv_heads": 8,
+      "head_dim": 128
+    },
+    {
+      "method": "iso",
+      "bits": 3,
+      "seq_len": 32768,
+      "compress_time_ms": 36.75515399663709,
+      "compress_toks_per_sec": 891521.2272814339,
+      "n_layers": 32,
+      "n_kv_heads": 8,
+      "head_dim": 128
+    },
+    {
+      "method": "rotor",
+      "bits": 3,
+      "seq_len": 512,
+      "compress_time_ms": 3.967784003179986,
+      "compress_toks_per_sec": 129039.28227687215,
+      "n_layers": 32,
+      "n_kv_heads": 8,
+      "head_dim": 128
+    },
+    {
+      "method": "rotor",
+      "bits": 3,
+      "seq_len": 2048,
+      "compress_time_ms": 3.757408994715661,
+      "compress_toks_per_sec": 545056.447908722,
+      "n_layers": 32,
+      "n_kv_heads": 8,
+      "head_dim": 128
+    },
+    {
+      "method": "rotor",
+      "bits": 3,
+      "seq_len": 8192,
+      "compress_time_ms": 9.890921995975077,
+      "compress_toks_per_sec": 828234.213487234,
+      "n_layers": 32,
+      "n_kv_heads": 8,
+      "head_dim": 128
+    },
+    {
+      "method": "rotor",
+      "bits": 3,
+      "seq_len": 32768,
+      "compress_time_ms": 38.31987099692924,
+      "compress_toks_per_sec": 855117.7012737298,
+      "n_layers": 32,
+      "n_kv_heads": 8,
+      "head_dim": 128
+    },
+    {
+      "method": "turbo",
+      "bits": 3,
+      "seq_len": 512,
+      "compress_time_ms": 27.009858000383247,
+      "compress_toks_per_sec": 18956.04190117309,
+      "n_layers": 32,
+      "n_kv_heads": 8,
+      "head_dim": 128
+    },
+    {
+      "method": "turbo",
+      "bits": 3,
+      "seq_len": 2048,
+      "compress_time_ms": 59.81199099915102,
+      "compress_toks_per_sec": 34240.62576397214,
+      "n_layers": 32,
+      "n_kv_heads": 8,
+      "head_dim": 128
+    },
+    {
+      "method": "turbo",
+      "bits": 3,
+      "seq_len": 8192,
+      "compress_time_ms": 202.1797859997605,
+      "compress_toks_per_sec": 40518.39287241952,
+      "n_layers": 32,
+      "n_kv_heads": 8,
+      "head_dim": 128
+    },
+    {
+      "method": "turbo",
+      "bits": 3,
+      "seq_len": 32768,
+      "compress_time_ms": 772.0895270031178,
+      "compress_toks_per_sec": 42440.67411092817,
+      "n_layers": 32,
+      "n_kv_heads": 8,
+      "head_dim": 128
+    }
+  ],
+  "e2e": []
+}

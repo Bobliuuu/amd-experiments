@@ -6,10 +6,10 @@
   "kv_config": "fp8_e4m3fnuz",
   "benchmarks": [
     {
-      "tokens_per_sec": 35.94,
-      "latency_ms": 27.822,
+      "tokens_per_sec": 40.73,
+      "latency_ms": 24.552,
       "vram_peak_gb": 14.72,
-      "prefill_ms": 10820.2,
+      "prefill_ms": 10976.1,
       "seq_len": 512,
       "n_decode": 20,
       "kv_dtype": "fp8_e4m3fnuz",
@@ -17,10 +17,10 @@
       "n_runs": 2
     },
     {
-      "tokens_per_sec": 35.49,
-      "latency_ms": 28.175,
+      "tokens_per_sec": 42.56,
+      "latency_ms": 23.497,
       "vram_peak_gb": 16.73,
-      "prefill_ms": 175.7,
+      "prefill_ms": 175.3,
       "seq_len": 2048,
       "n_decode": 20,
       "kv_dtype": "fp8_e4m3fnuz",
@@ -28,10 +28,10 @@
       "n_runs": 2
     },
     {
-      "tokens_per_sec": 28.91,
-      "latency_ms": 34.594,
+      "tokens_per_sec": 45.98,
+      "latency_ms": 21.748,
       "vram_peak_gb": 16.6,
-      "prefill_ms": 410.6,
+      "prefill_ms": 411.3,
       "seq_len": 8192,
       "n_decode": 20,
       "kv_dtype": "fp8_e4m3fnuz",

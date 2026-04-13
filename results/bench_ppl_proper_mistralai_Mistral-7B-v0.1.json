@@ -1,0 +1,71 @@
+{
+  "model": "mistralai/Mistral-7B-v0.1",
+  "n_tokens": 4096,
+  "context_len": 512,
+  "fp16_ppl": 7.8169,
+  "results": [
+    {
+      "scheme": "fp16",
+      "bits": 16,
+      "perplexity": 7.8169,
+      "nll_mean": 2.056288,
+      "n_tokens": 4095,
+      "n_windows": 8,
+      "delta_ppl": 0.0
+    },
+    {
+      "scheme": "fp8",
+      "bits": 3,
+      "perplexity": NaN,
+      "nll_mean": NaN,
+      "n_tokens": 4095,
+      "n_windows": 8,
+      "delta_ppl": NaN
+    },
+    {
+      "scheme": "int4",
+      "bits": 4,
+      "perplexity": 10.8483,
+      "nll_mean": 2.384005,
+      "n_tokens": 4095,
+      "n_windows": 8,
+      "delta_ppl": 3.0314
+    },
+    {
+      "scheme": "tq3",
+      "bits": 3,
+      "perplexity": 8.1502,
+      "nll_mean": 2.098046,
+      "n_tokens": 4095,
+      "n_windows": 8,
+      "delta_ppl": 0.3333
+    },
+    {
+      "scheme": "tq4",
+      "bits": 4,
+      "perplexity": 7.7665,
+      "nll_mean": 2.049817,
+      "n_tokens": 4095,
+      "n_windows": 8,
+      "delta_ppl": -0.0504
+    },
+    {
+      "scheme": "tq3_k_only",
+      "bits": 3,
+      "perplexity": 8.0189,
+      "nll_mean": 2.081807,
+      "n_tokens": 4095,
+      "n_windows": 8,
+      "delta_ppl": 0.202
+    },
+    {
+      "scheme": "tq4_k_only",
+      "bits": 4,
+      "perplexity": 7.7978,
+      "nll_mean": 2.053846,
+      "n_tokens": 4095,
+      "n_windows": 8,
+      "delta_ppl": -0.0191
+    }
+  ]
+}
