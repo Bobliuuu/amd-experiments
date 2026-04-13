@@ -15,6 +15,10 @@ New figures (beyond the original 10):
   Fig 18: Roofline-style bandwidth vs arithmetic intensity plot
   Fig 19: FMAs per vector comparison (theoretical computation cost)
   Fig 20: K-only vs symmetric compression ablation
+  Fig 22: KV CACHE COMPRESSION — storage 4.92× vs FP16 + kernel throughput panel
+  Fig 23: KV CACHE COMPRESSION COMPARISON — CACHE COMPRESSION–only bar chart (table lives in report .md)
+  Fig 24: Pope (2026) RotorQuant headline claims — CUDA/Metal speedups, params, fidelity (reference JSON)
+  Fig 25: MI300X measured vs author CUDA claims — RotorQuant/Turbo deltas
 
 Color scheme (consistent across all figures):
   FP16    = #888888 (gray)
@@ -205,16 +209,24 @@ def stub_prefill_data() -> list:
 
 
 def stub_compress_decompress_data() -> list:
-    """Stub compress/decompress microbenchmark data."""
+    """Stub compress/decompress microbenchmark data (matches §4 MI300X table, rounded)."""
     return [
-        {"method": "turbo",  "bits": 3, "compress_bw_gbs": 11.8, "decompress_bw_gbs": 58.4,  "fmas_per_vec": 16384},
-        {"method": "turbo",  "bits": 4, "compress_bw_gbs": 11.2, "decompress_bw_gbs": 55.1,  "fmas_per_vec": 16384},
-        {"method": "iso",    "bits": 3, "compress_bw_gbs": 45.2, "decompress_bw_gbs": 180.3, "fmas_per_vec": 512},
-        {"method": "iso",    "bits": 4, "compress_bw_gbs": 42.8, "decompress_bw_gbs": 172.1, "fmas_per_vec": 512},
-        {"method": "planar", "bits": 3, "compress_bw_gbs": 62.1, "decompress_bw_gbs": 215.4, "fmas_per_vec": 256},
-        {"method": "planar", "bits": 4, "compress_bw_gbs": 59.3, "decompress_bw_gbs": 205.2, "fmas_per_vec": 256},
-        {"method": "rotor",  "bits": 3, "compress_bw_gbs": 28.4, "decompress_bw_gbs": 112.6, "fmas_per_vec": 1194},
-        {"method": "rotor",  "bits": 4, "compress_bw_gbs": 26.9, "decompress_bw_gbs": 106.8, "fmas_per_vec": 1194},
+        {"method": "turbo",  "bits": 3, "compress_bw_gbs": 2.9,  "decompress_bw_gbs": 4.4,
+         "fmas_per_vec": 16384, "compression_ratio": 4.923076923076923},
+        {"method": "turbo",  "bits": 4, "compress_bw_gbs": 2.1,  "decompress_bw_gbs": 3.6,
+         "fmas_per_vec": 16384, "compression_ratio": 3.764705882352941},
+        {"method": "iso",    "bits": 3, "compress_bw_gbs": 21.8, "decompress_bw_gbs": 38.3,
+         "fmas_per_vec": 512, "compression_ratio": 4.923076923076923},
+        {"method": "iso",    "bits": 4, "compress_bw_gbs": 23.1, "decompress_bw_gbs": 37.7,
+         "fmas_per_vec": 512, "compression_ratio": 3.764705882352941},
+        {"method": "planar", "bits": 3, "compress_bw_gbs": 18.7, "decompress_bw_gbs": 35.4,
+         "fmas_per_vec": 256, "compression_ratio": 4.923076923076923},
+        {"method": "planar", "bits": 4, "compress_bw_gbs": 20.0, "decompress_bw_gbs": 37.8,
+         "fmas_per_vec": 256, "compression_ratio": 3.764705882352941},
+        {"method": "rotor",  "bits": 3, "compress_bw_gbs": 17.3, "decompress_bw_gbs": 34.8,
+         "fmas_per_vec": 1176, "compression_ratio": 4.923076923076923},
+        {"method": "rotor",  "bits": 4, "compress_bw_gbs": 19.5, "decompress_bw_gbs": 36.9,
+         "fmas_per_vec": 1176, "compression_ratio": 3.764705882352941},
     ]
 
 
@@ -594,7 +606,7 @@ def fig19_fmas_comparison(output_dir: Path):
     methods = [
         ("PlanarQuant\n(2D Givens)", 256, "planar3"),
         ("IsoQuant\n(4D Quaternion)", 512, "iso3"),
-        ("RotorQuant\n(Clifford Cl3)", 1194, "rotor3"),
+        ("RotorQuant\n(Clifford Cl3)", 1176, "rotor3"),
         ("TurboQuant\n(WHT butterfly)", 16384, "turbo3"),
     ]
 
@@ -682,6 +694,547 @@ def fig20_k_only_ablation(output_dir: Path):
     fig.tight_layout()
     out = output_dir / "fig20_k_only_ablation.png"
     fig.savefig(out)
+    plt.close(fig)
+    print(f"  Saved: {out}")
+
+
+def fig21_headline_compression_comparison(output_dir: Path):
+    """Headline K/V compression comparison from RotorQuant README."""
+    fig, axes = plt.subplots(2, 2, figsize=(14, 9))
+
+    rows = [
+        ("FP16\nK + V", 140, 6156, 6.63, 1.0, "#888888"),
+        ("IsoQuant\n(3-bit K+V)", 118, 3397, 6.91, 10.3, COLORS["iso3"]),
+        ("PlanarQuant\n(3-bit K+V)", 119, 3822, 7.05, 10.3, COLORS["planar3"]),
+        ("TurboQuant\n(3-bit K+V)", 93, 722, 7.07, 10.3, COLORS["turbo3"]),
+        ("PlanarQuant K\nTurboQuant V", 127, None, 6.68, 10.3, COLORS["planar3"]),
+        ("PlanarQuant K\n+ FP16 V", 134, None, 6.63, 5.1, COLORS["planar3"]),
+    ]
+    names = [r[0] for r in rows]
+    decode = [r[1] for r in rows]
+    prefill = [r[2] for r in rows]
+    ppl = [r[3] for r in rows]
+    comp = [r[4] for r in rows]
+    colors_list = [r[5] for r in rows]
+    x = np.arange(len(rows))
+
+    # Decode tok/s
+    ax = axes[0, 0]
+    bars = ax.bar(x, decode, color=colors_list, alpha=0.9)
+    ax.set_xticks(x)
+    ax.set_xticklabels(names, rotation=28, ha="right")
+    ax.set_ylabel("Decode tok/s")
+    ax.set_title("Decode Throughput (higher is better)")
+    ax.grid(True, axis="y", alpha=0.25)
+    for bar, val in zip(bars, decode):
+        ax.text(bar.get_x() + bar.get_width() / 2, val + 2, f"{val}",
+                ha="center", va="bottom", fontsize=8)
+
+    # Prefill tok/s (skip unavailable values)
+    ax = axes[0, 1]
+    prefill_vals = [v if v is not None else 0 for v in prefill]
+    bars = ax.bar(x, prefill_vals, color=colors_list, alpha=0.9)
+    ax.set_xticks(x)
+    ax.set_xticklabels(names, rotation=28, ha="right")
+    ax.set_ylabel("Prefill tok/s")
+    ax.set_title("Prefill Throughput (higher is better)")
+    ax.grid(True, axis="y", alpha=0.25)
+    for i, (bar, val) in enumerate(zip(bars, prefill)):
+        if val is None:
+            ax.text(i, 80, "n/a", ha="center", va="bottom", fontsize=8)
+        else:
+            ax.text(bar.get_x() + bar.get_width() / 2, val + 40, f"{val:,}",
+                    ha="center", va="bottom", fontsize=8)
+
+    # PPL
+    ax = axes[1, 0]
+    bars = ax.bar(x, ppl, color=colors_list, alpha=0.9)
+    ax.set_xticks(x)
+    ax.set_xticklabels(names, rotation=28, ha="right")
+    ax.set_ylabel("WikiText-2 PPL")
+    ax.set_title("Quality (lower is better)")
+    ax.grid(True, axis="y", alpha=0.25)
+    ax.axhline(6.63, color="#888888", linestyle="--", alpha=0.6, label="FP16 baseline")
+    ax.legend(loc="upper right", fontsize=8)
+    for bar, val in zip(bars, ppl):
+        ax.text(bar.get_x() + bar.get_width() / 2, val + 0.02, f"{val:.2f}",
+                ha="center", va="bottom", fontsize=8)
+
+    # Compression
+    ax = axes[1, 1]
+    bars = ax.bar(x, comp, color=colors_list, alpha=0.9)
+    ax.set_xticks(x)
+    ax.set_xticklabels(names, rotation=28, ha="right")
+    ax.set_ylabel("Compression vs FP16")
+    ax.set_title("Effective Compression (higher is better)")
+    ax.grid(True, axis="y", alpha=0.25)
+    for bar, val in zip(bars, comp):
+        ax.text(bar.get_x() + bar.get_width() / 2, val + 0.12, f"{val:.1f}x",
+                ha="center", va="bottom", fontsize=8)
+
+    fig.suptitle(
+        "External reference (RotorQuant / llama.cpp README) — not MI300X\n"
+        "10.3× vs 4.923×: different on-disk KV formats (upstream vs this repo TQ3)",
+        fontsize=10,
+    )
+    fig.tight_layout()
+    out = output_dir / "fig21_headline_compression_comparison.png"
+    fig.savefig(out)
+    plt.close(fig)
+    print(f"  Saved: {out}")
+
+
+def fig22_cache_compression_mi300x(compress_data: list, output_dir: Path):
+    """KV CACHE COMPRESSION: 4.92× storage vs FP16 for all 3-bit layouts; kernel BW varies."""
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12.5, 5.2))
+
+    def row3(method: str):
+        for d in compress_data:
+            if d["method"] == method and d.get("bits") == 3:
+                return d
+        return None
+
+    turbo3 = row3("turbo")
+    ratio_3 = float(turbo3["compression_ratio"]) if turbo3 else 4.923076923076923
+
+    specs = [
+        ("fp16", "FP16\n(baseline KV)", "fp16"),
+        ("planar", "PlanarQuant3", "planar3"),
+        ("iso", "IsoQuant3", "iso3"),
+        ("rotor", "RotorQuant3", "rotor3"),
+        ("turbo", "TurboQuant3", "turbo3"),
+    ]
+    x = np.arange(len(specs))
+    ratios = []
+    for mshort, _, _ in specs:
+        if mshort == "fp16":
+            ratios.append(1.0)
+        else:
+            d = row3(mshort)
+            ratios.append(
+                float(d["compression_ratio"])
+                if d and d.get("compression_ratio") is not None
+                else ratio_3
+            )
+    colors_list = [color(s[2]) for s in specs]
+    bars1 = ax1.bar(x, ratios, color=colors_list, alpha=0.9, edgecolor="white", linewidth=0.8)
+    ax1.set_xticks(x)
+    ax1.set_xticklabels([s[1] for s in specs], rotation=22, ha="right")
+    ax1.set_ylabel("CACHE COMPRESSION vs FP16 (× fewer bytes per head vector)")
+    ax1.set_title("KV CACHE COMPRESSION (storage)\n256 B FP16 → 52 B 3-bit layout (4.923×)")
+    ax1.grid(axis="y", alpha=0.3)
+    ax1.axhline(1.0, color="#666666", linestyle="--", alpha=0.5)
+    for bar, r in zip(bars1, ratios):
+        h = bar.get_height()
+        ax1.text(
+            bar.get_x() + bar.get_width() / 2,
+            h + 0.12,
+            "1.0×" if r <= 1.01 else f"{r:.3f}×",
+            ha="center",
+            va="bottom",
+            fontsize=9,
+        )
+
+    methods_order = ["planar", "iso", "rotor", "turbo"]
+    names = [label(f"{m}3") for m in methods_order]
+    compress_bw = []
+    decompress_bw = []
+    for m in methods_order:
+        d = row3(m)
+        compress_bw.append(float(d["compress_bw_gbs"]) if d else 0.0)
+        decompress_bw.append(float(d["decompress_bw_gbs"]) if d else 0.0)
+
+    x2 = np.arange(len(names))
+    w = 0.36
+    ax2.bar(x2 - w / 2, compress_bw, w, label="Compress", color="#335599", alpha=0.88)
+    ax2.bar(x2 + w / 2, decompress_bw, w, label="Decompress", color="#995533", alpha=0.88)
+    ax2.set_xticks(x2)
+    ax2.set_xticklabels(names, rotation=18, ha="right")
+    ax2.set_ylabel("Kernel bandwidth (GB/s)")
+    ax2.set_title(
+        "KV pack / unpack throughput (§4 microbenchmark)\n"
+        "Same CACHE COMPRESSION; TurboQuant WHT is 6–9× slower than block rotations"
+    )
+    ax2.legend(loc="upper right")
+    ax2.grid(axis="y", alpha=0.3)
+    if turbo3 and turbo3.get("compress_bw_gbs"):
+        t_comp = float(turbo3["compress_bw_gbs"])
+        t_dec = float(turbo3["decompress_bw_gbs"])
+        for i, m in enumerate(methods_order):
+            if m == "turbo":
+                continue
+            d = row3(m)
+            if not d:
+                continue
+            sc = float(d["compress_bw_gbs"]) / t_comp
+            sd = float(d["decompress_bw_gbs"]) / t_dec
+            ax2.annotate(
+                f"{sc:.1f}× / {sd:.1f}×",
+                xy=(x2[i], max(compress_bw[i], decompress_bw[i])),
+                xytext=(0, 6),
+                textcoords="offset points",
+                ha="center",
+                fontsize=7,
+                color="#333333",
+            )
+
+    fig.suptitle(
+        "MI300X — KV CACHE COMPRESSION (head_dim=128, gfx942) vs FP16 baseline + kernel cost",
+        fontsize=12,
+        fontweight="bold",
+        y=1.02,
+    )
+    fig.tight_layout()
+    out = output_dir / "fig22_cache_compression_mi300x.png"
+    fig.savefig(out, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  Saved: {out}")
+
+
+def fig23_kv_cache_compression_comparison(compress_data: list, output_dir: Path):
+    """KV CACHE COMPRESSION COMPARISON — bar chart only (full metrics table is in final_report_v2.md)."""
+    def row3(method: str):
+        for d in compress_data:
+            if d["method"] == method and d.get("bits") == 3:
+                return d
+        return None
+
+    turbo = row3("turbo")
+    ratio = float(turbo["compression_ratio"]) if turbo and turbo.get("compression_ratio") else 4.923076923076923
+
+    col_keys = [
+        ("fp16", "FP16\n(baseline)"),
+        ("turbo", "TurboQuant\n(TQ3)"),
+        ("iso", "IsoQuant"),
+        ("planar", "PlanarQuant"),
+        ("rotor", "RotorQuant"),
+    ]
+
+    bar_compression = []
+    bar_colors = []
+    for key, _ in col_keys:
+        if key == "fp16":
+            bar_compression.append(1.0)
+            bar_colors.append(color("fp16"))
+        else:
+            bar_compression.append(ratio)
+            bar_colors.append(color(f"{key}3"))
+
+    col_labels = [lbl for _, lbl in col_keys]
+
+    fig, ax_bar = plt.subplots(figsize=(11, 5.5))
+    fig.suptitle(
+        "KV CACHE COMPRESSION COMPARISON",
+        fontsize=20,
+        fontweight="bold",
+        y=1.02,
+    )
+    x = np.arange(len(col_labels))
+    bars = ax_bar.bar(x, bar_compression, color=bar_colors, alpha=0.92, edgecolor="white", linewidth=1.0)
+    ax_bar.set_xticks(x)
+    ax_bar.set_xticklabels(col_labels, fontsize=11)
+    ax_bar.set_ylabel("CACHE COMPRESSION (× vs FP16 bytes per head vector)", fontsize=12)
+    ax_bar.set_title(
+        "CACHE COMPRESSION only — same ~4.923× on-disk layout for all 3-bit methods (TQ3-style pack)\n"
+        "MI300X gfx942, head_dim=128 — compress/decompress GB/s in report table",
+        fontsize=10,
+    )
+    ax_bar.axhline(1.0, color="#666666", linestyle="--", alpha=0.6, linewidth=1)
+    ax_bar.grid(axis="y", alpha=0.35)
+    for bar, val in zip(bars, bar_compression):
+        label = "1.0×" if val <= 1.01 else f"{val:.3f}×"
+        ax_bar.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 0.08,
+            label,
+            ha="center",
+            va="bottom",
+            fontsize=10,
+            fontweight="bold",
+        )
+    ax_bar.set_ylim(0, max(bar_compression) * 1.2)
+
+    fig.tight_layout()
+    out = output_dir / "fig23_kv_cache_compression_comparison.png"
+    fig.savefig(out, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  Saved: {out}")
+
+
+def fig24_pope_rotorquant_2026_claims(results_dir: Path, output_dir: Path):
+    """
+    Four headline claim types from Pope (2026) RotorQuant materials (scrya.com / GitHub).
+    Values load from results/pope_rotorquant_2026_claims.json when present.
+    Not measured in this repo: no CUDA/Metal fused kernels on MI300X (ROCm Triton path differs).
+    """
+    path = results_dir / "pope_rotorquant_2026_claims.json"
+    defaults = {
+        "cuda_speedup_min": 10,
+        "cuda_speedup_max": 19,
+        "metal_speedup_min": 9,
+        "metal_speedup_max": 31,
+        "params_rotor": 372,
+        "params_dxd_matmul": 16399,
+        "param_reduction_x": 44,
+        "attention_fidelity_pct": 99.0,
+        "fidelity_model": "Qwen2.5-3B",
+    }
+    data = dict(defaults)
+    if path.exists():
+        with open(path) as f:
+            loaded = json.load(f)
+        for k, v in loaded.items():
+            if str(k).startswith("_"):
+                continue
+            data[k] = v
+
+    c_lo, c_hi = int(data["cuda_speedup_min"]), int(data["cuda_speedup_max"])
+    m_lo, m_hi = int(data["metal_speedup_min"]), int(data["metal_speedup_max"])
+    p_rot = int(data["params_rotor"])
+    p_dxd = int(data["params_dxd_matmul"])
+    red_x = float(data["param_reduction_x"])
+    fid = float(data["attention_fidelity_pct"])
+    fid_model = data.get("fidelity_model", "Qwen2.5-3B")
+
+    fig, axes = plt.subplots(2, 2, figsize=(11.5, 8.8))
+    fig.suptitle(
+        "RotorQuant headline claims (Pope, March 2026)\n"
+        "Fused CUDA / Metal vs d×d TurboQuant-style matmul — author-reported; not MI300X / ROCm",
+        fontsize=13,
+        fontweight="bold",
+        y=0.98,
+    )
+
+    # (0,0) Fused kernel speedup ranges
+    ax = axes[0, 0]
+    ax.set_title("① Fused kernel speedup (claimed)", fontsize=11, fontweight="bold")
+    labels = ["NVIDIA\n(fused CUDA)", "Apple Silicon\n(fused Metal)"]
+    ranges = [(c_lo, c_hi), (m_lo, m_hi)]
+    colors_hw = ["#76B900", "#6E6E73"]
+    y = np.arange(len(labels))
+    for i, ((lo, hi), c) in enumerate(zip(ranges, colors_hw)):
+        ax.barh(i, hi - lo, left=lo, height=0.42, color=c, alpha=0.9, edgecolor="white", linewidth=1)
+        ax.text(
+            (lo + hi) / 2,
+            i,
+            f"{lo}–{hi}×",
+            ha="center",
+            va="center",
+            fontsize=11,
+            fontweight="bold",
+            color="white",
+        )
+    ax.set_yticks(y)
+    ax.set_yticklabels(labels, fontsize=10)
+    ax.set_xlabel("Speedup vs TurboQuant d×d path (×)")
+    ax.set_xlim(0, max(c_hi, m_hi) * 1.08)
+    ax.grid(axis="x", alpha=0.3)
+
+    # (0,1) Parameter counts d=128
+    ax = axes[0, 1]
+    ax.set_title("② Parameters per head (d=128, claimed)", fontsize=11, fontweight="bold")
+    names = [f"Cl(3,0) rotor\n({p_rot:,})", f"d×d matmul\n({p_dxd:,})"]
+    vals = [p_rot, p_dxd]
+    bc = [color("rotor3"), color("turbo3")]
+    bars = ax.bar(names, vals, color=bc, alpha=0.9, edgecolor="white", linewidth=1)
+    ax.set_ylabel("Parameter count (log scale)")
+    ax.set_yscale("log")
+    ax.grid(axis="y", alpha=0.3)
+    for bar, v in zip(bars, vals):
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() * 1.15,
+            f"{v:,}",
+            ha="center",
+            va="bottom",
+            fontsize=10,
+            fontweight="bold",
+        )
+
+    # (1,0) Single headline: N× fewer parameters
+    ax = axes[1, 0]
+    ax.set_title("③ Fewer parameters vs d×d (claimed)", fontsize=11, fontweight="bold")
+    ax.barh([0], [red_x], height=0.45, color=color("rotor3"), alpha=0.92, edgecolor="white", linewidth=1)
+    ax.set_yticks([0])
+    ax.set_yticklabels(["RotorQuant vs\nfull d×d rotation"])
+    ax.set_xlabel("× reduction in learned/stored rotation params")
+    ax.set_xlim(0, red_x * 1.25)
+    ax.text(red_x / 2, 0, f"{red_x:.0f}×", ha="center", va="center", fontsize=18, fontweight="bold", color="white")
+    ax.grid(axis="x", alpha=0.3)
+
+    # (1,1) Attention fidelity
+    ax = axes[1, 1]
+    ax.set_title("④ Attention fidelity (claimed)", fontsize=11, fontweight="bold")
+    ax.bar(
+        [0],
+        [fid],
+        width=0.55,
+        color="#2d6a4f",
+        alpha=0.92,
+        edgecolor="white",
+        linewidth=1,
+    )
+    ax.set_xticks([0])
+    ax.set_xticklabels([f"Cosine sim\n({fid_model})"], fontsize=10)
+    ax.set_ylabel("Cosine similarity (%)")
+    ax.set_ylim(96.5, 100.2)
+    ax.axhline(99, color="#ff9f1c", linestyle="--", alpha=0.7, linewidth=1.5, label="99% reference")
+    ax.text(0, fid + 0.12, f"{fid:.1f}%", ha="center", va="bottom", fontsize=12, fontweight="bold")
+    ax.legend(loc="lower right", fontsize=8)
+    ax.grid(axis="y", alpha=0.3)
+
+    fig.text(
+        0.5,
+        0.01,
+        "Data file: results/pope_rotorquant_2026_claims.json — "
+        "https://www.scrya.com/rotorquant",
+        ha="center",
+        fontsize=8,
+        color="#555555",
+    )
+
+    plt.tight_layout(rect=[0, 0.03, 1, 0.94])
+    out = output_dir / "fig24_pope_rotorquant_2026_claims.png"
+    fig.savefig(out, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  Saved: {out}")
+
+
+def fig25_mi300x_vs_author_claims(results_dir: Path, output_dir: Path):
+    """Compare MI300X measured (Iso/Planar/Rotor vs Turbo) against author CUDA rotor claims."""
+    author_path = results_dir / "pope_rotorquant_2026_claims.json"
+    author = {
+        "cuda_speedup_min": 10,
+        "cuda_speedup_max": 19,
+        "param_reduction_x": 44.0,
+        "attention_fidelity_pct": 99.0,
+    }
+    if author_path.exists():
+        with open(author_path) as f:
+            loaded = json.load(f)
+        for k, v in loaded.items():
+            if not str(k).startswith("_"):
+                author[k] = v
+
+    speed_path = results_dir / "bench_compress_decompress_recheck.json"
+    if not speed_path.exists():
+        speed_path = results_dir / "bench_compress_decompress.json"
+    qual_path = results_dir / "bench_ppl_all_methods_quality_recheck.json"
+    if not qual_path.exists():
+        qual_path = results_dir / "bench_ppl_all_methods.json"
+
+    with open(speed_path) as f:
+        speed = json.load(f)
+    with open(qual_path) as f:
+        qual = json.load(f)
+
+    def pick(rows, method, bits=3):
+        for r in rows:
+            if r.get("method") == method and int(r.get("bits", -1)) == bits:
+                return r
+        return None
+
+    turbo = pick(speed, "turbo", 3)
+    turbo_q = pick(qual, "turbo", 3)
+    if turbo is None or turbo_q is None:
+        print("  Skipped fig25: missing turbo baseline rows")
+        return
+
+    methods = ["planar", "iso", "rotor"]
+    labels = ["PlanarQuant", "IsoQuant", "RotorQuant"]
+    colors_list = [color("planar3"), color("iso3"), color("rotor3")]
+
+    speedups_c = []
+    speedups_d = []
+    param_red = []
+    fidelity = []
+
+    d = int(turbo.get("head_dim", 128))
+    turbo_params = d * d
+
+    for m in methods:
+        s = pick(speed, m, 3)
+        q = pick(qual, m, 3)
+        if s is None or q is None:
+            print(f"  Skipped fig25: missing data for {m}3")
+            return
+
+        speedups_c.append(float(s["compress_bw_gbs"]) / float(turbo["compress_bw_gbs"]))
+        speedups_d.append(float(s["decompress_bw_gbs"]) / float(turbo["decompress_bw_gbs"]))
+
+        if m == "planar":
+            params = ((d + 2 - 1) // 2) * 2  # cos,sin per 2D block
+        elif m == "iso":
+            params = ((d + 4 - 1) // 4) * 4  # quaternion per 4D block
+        else:
+            params = ((d + 3 - 1) // 3) * 4  # rotor per 3D block
+        param_red.append(turbo_params / params)
+        fidelity.append(float(q.get("cosine_sim_mean", 0.0)) * 100.0)
+
+    fig, axes = plt.subplots(1, 3, figsize=(15.5, 4.9))
+    fig.suptitle(
+        "MI300X measured (Iso/Planar/Rotor) vs Turbo baseline + author CUDA rotor references",
+        fontsize=12,
+        fontweight="bold",
+    )
+
+    x = np.arange(len(labels))
+    w = 0.35
+
+    ax = axes[0]
+    ax.set_title("Speedup vs TurboQuant (MI300X)")
+    ax.bar(x - w / 2, speedups_c, w, label="Compress", color="#4C78A8", alpha=0.9)
+    ax.bar(x + w / 2, speedups_d, w, label="Decompress", color="#72B7B2", alpha=0.9)
+    ax.axhspan(float(author["cuda_speedup_min"]), float(author["cuda_speedup_max"]),
+               color="#F58518", alpha=0.20,
+               label=f"Author CUDA rotor range {author['cuda_speedup_min']}-{author['cuda_speedup_max']}×")
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, fontsize=9)
+    ax.set_ylabel("× vs Turbo")
+    ax.grid(axis="y", alpha=0.3)
+    ax.legend(loc="upper left", fontsize=7)
+
+    ax = axes[1]
+    ax.set_title("Parameter reduction vs Turbo d×d")
+    bars = ax.bar(x, param_red, color=colors_list, alpha=0.9)
+    ax.axhline(float(author["param_reduction_x"]), color="#E45756", linestyle="--", linewidth=1.5,
+               label=f"Author rotor claim {author['param_reduction_x']:.0f}×")
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, fontsize=9)
+    ax.set_ylabel("× fewer params vs 128×128")
+    ax.grid(axis="y", alpha=0.3)
+    ax.legend(loc="upper right", fontsize=7)
+    for b, v in zip(bars, param_red):
+        ax.text(b.get_x() + b.get_width() / 2, v + max(param_red)*0.02, f"{v:.1f}×",
+                ha="center", va="bottom", fontsize=8, fontweight="bold")
+
+    ax = axes[2]
+    ax.set_title("Attention fidelity (cosine, MI300X)")
+    bars = ax.bar(x, fidelity, color=colors_list, alpha=0.9)
+    ax.axhline(float(author["attention_fidelity_pct"]), color="#B279A2", linestyle="--", linewidth=1.5,
+               label=f"Author rotor claim {author['attention_fidelity_pct']:.1f}%")
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, fontsize=9)
+    ax.set_ylabel("Cosine similarity (%)")
+    ax.set_ylim(min(fidelity) - 0.8, 100.1)
+    ax.grid(axis="y", alpha=0.3)
+    ax.legend(loc="lower right", fontsize=7)
+    for b, v in zip(bars, fidelity):
+        ax.text(b.get_x() + b.get_width() / 2, v + 0.03, f"{v:.2f}%",
+                ha="center", va="bottom", fontsize=8, fontweight="bold")
+
+    fig.text(
+        0.5,
+        0.01,
+        "MI300X data: bench_compress_decompress_recheck.json + bench_ppl_all_methods_quality_recheck.json; "
+        "author references: pope_rotorquant_2026_claims.json",
+        ha="center",
+        fontsize=8,
+        color="#555555",
+    )
+    plt.tight_layout(rect=[0, 0.05, 1, 0.92])
+    out = output_dir / "fig25_mi300x_vs_author_claims.png"
+    fig.savefig(out, bbox_inches="tight")
     plt.close(fig)
     print(f"  Saved: {out}")
 
@@ -803,6 +1356,11 @@ def main():
     fig18_roofline(compress_data, output_dir)
     fig19_fmas_comparison(output_dir)
     fig20_k_only_ablation(output_dir)
+    fig21_headline_compression_comparison(output_dir)
+    fig22_cache_compression_mi300x(compress_data, output_dir)
+    fig23_kv_cache_compression_comparison(compress_data, output_dir)
+    fig24_pope_rotorquant_2026_claims(results_dir, output_dir)
+    fig25_mi300x_vs_author_claims(results_dir, output_dir)
 
     print(f"\nAll figures saved to {output_dir}")
     print(f"\n{generate_deployment_summary_table()}")

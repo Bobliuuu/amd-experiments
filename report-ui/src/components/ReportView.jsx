@@ -32,6 +32,28 @@ function Hero({ title, subtitle, statA, statB }) {
   );
 }
 
+function extractSnapshot(markdown) {
+  const lines = markdown.split("\n");
+  const title = lines.find((line) => line.startsWith("# "))?.replace(/^#\s+/, "") || "";
+  const lead =
+    lines.find(
+      (line) =>
+        line.trim() &&
+        !line.startsWith("#") &&
+        !line.startsWith("|") &&
+        !line.startsWith("```")
+    ) || "";
+  const sections = lines
+    .filter((line) => line.startsWith("## "))
+    .map((line) => line.replace(/^##\s+/, "").trim())
+    .slice(0, 6);
+
+  const numericMatches =
+    markdown.match(/\b\d+(?:\.\d+)?(?:x|%|M|K|MB|GB|us|ms|tok\/s)\b/gi) || [];
+  const highlights = [...new Set(numericMatches)].slice(0, 4);
+  return { title, lead, sections, highlights };
+}
+
 export default function ReportView({ kind }) {
   const [markdown, setMarkdown] = useState("");
   const [sourceUrl, setSourceUrl] = useState("");
@@ -77,6 +99,7 @@ export default function ReportView({ kind }) {
   }, [kind]);
 
   const figures = getFigureUrls(kind);
+  const snapshot = useMemo(() => extractSnapshot(markdown), [markdown]);
 
   return (
     <main className="report-shell">
@@ -93,6 +116,37 @@ export default function ReportView({ kind }) {
       ) : null}
 
       <motion.section
+        className="snapshot-grid"
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.35, delay: 0.04 }}
+      >
+        <article className="snapshot-main glass">
+          <p className="eyebrow">{kind === "v2" ? "Report V2 Snapshot" : "Report Snapshot"}</p>
+          <h3>{snapshot.title || heroProps.title}</h3>
+          <p>{snapshot.lead || heroProps.subtitle}</p>
+        </article>
+        <article className="snapshot-rail glass">
+          <h4>Key Signals</h4>
+          <div className="snapshot-pills">
+            {(snapshot.highlights.length ? snapshot.highlights : [heroProps.statA.value]).map(
+              (item) => (
+                <span key={item}>{item}</span>
+              )
+            )}
+          </div>
+          <h4>Top Sections</h4>
+          <ul>
+            {snapshot.sections.length ? (
+              snapshot.sections.map((section) => <li key={section}>{section}</li>)
+            ) : (
+              <li>Loading sections...</li>
+            )}
+          </ul>
+        </article>
+      </motion.section>
+
+      <motion.section
         className="markdown-wrap glass"
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
@@ -101,6 +155,9 @@ export default function ReportView({ kind }) {
         <ReactMarkdown
           remarkPlugins={[remarkGfm]}
           components={{
+            h2: ({ children }) => <h2 className="md-section">{children}</h2>,
+            h3: ({ children }) => <h3 className="md-subsection">{children}</h3>,
+            p: ({ children }) => <p className="md-paragraph">{children}</p>,
             img: ({ src, alt }) => (
               <img
                 src={resolveImageSrc(sourceUrl, src || "")}

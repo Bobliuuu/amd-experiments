@@ -1,20 +1,22 @@
-import { Link, NavLink } from "react-router-dom";
 import { motion } from "framer-motion";
 
 export default function NavBar() {
   return (
     <header className="topbar glass">
-      <Link className="brand" to="/">
+      <a className="brand" href="#landing">
         <span className="brand-mark" />
         <span>QUANTUM_OBSERVATORY</span>
-      </Link>
+      </a>
       <nav className="nav-tabs">
-        <NavLink to="/report" className="tab-link">
+        <a href="#landing" className="tab-link">
+          Landing
+        </a>
+        <a href="#report-v1" className="tab-link">
           Report
-        </NavLink>
-        <NavLink to="/report-v2" className="tab-link">
+        </a>
+        <a href="#report-v2" className="tab-link">
           Report V2
-        </NavLink>
+        </a>
       </nav>
       <motion.div
         className="status-chip"

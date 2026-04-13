@@ -13,6 +13,15 @@ We present a hardware-aware adaptation of TurboQuant KV cache compression for AM
 validated end-to-end on the MI300X (gfx942). All benchmarks have been confirmed to run
 correctly with the latest transformers 5.5.3 API.
 
+### Cache Compression First (headline)
+
+| Compression headline | Result |
+|---|---|
+| Symmetric K+V in **upstream** llama.cpp headline table | **10.3×** (IsoQuant, PlanarQuant, **TurboQuant** dtypes there — **not** MI300X measured) |
+| Same table, K-only style row | **5.1×** (PlanarQuant **3-bit K** + FP16 **V**, ~FP16 PPL) |
+| TurboQuant in *this* MI300X report (PyTorch TQ3 layout) | **4.923×** vs FP16 KV |
+| Baseline | **1.0×** (FP16 K + FP16 V) |
+
 | Contribution | Result |
 |---|---|
 | MI300X-native TurboQuant HIP library | 16/16 validation tests pass, cosine sim ≥ 0.967 |
@@ -27,11 +36,45 @@ correctly with the latest transformers 5.5.3 API.
 | Llama-3-70B capacity analysis | TQ3 extends 70B context from ~156K → ~769K tokens on 192 GB |
 | Batch decode BW model | TQ3 speedup ~4.58× at batch=64, seq=32K (bandwidth-bottleneck regime) |
 
-**Key insight**: TQ3 achieves the best compression ratio (4.923× vs FP16) while maintaining
+**Key insight**: In the MI300X TurboQuant implementation in this report, TQ3 achieves
+4.923× compression vs FP16 while maintaining
 high reconstruction quality (cosine sim = 0.9831). The Triton fused kernel is numerically exact
 and delivers 1.87–2.56× throughput improvement over the Python wrapper. The vLLM integration
 enables production serving with TQ3 KV cache at batch≥16, where the 4.92× compression yields
 near-linear throughput improvement in the bandwidth-bottleneck regime.
+
+## Headline Compression Comparisons
+
+### External reference table (not measured on MI300X)
+
+The rows below are **not** from this lab’s hardware. They are transcribed from the **RotorQuant / llama.cpp** documentation (published comparison for **Llama 3.1 8B Instruct Q4_K_M**, often labeled with an **RTX 5090** in the upstream README). **We do not have an RTX 5090**; this block is included only as a **third-party headline** for how those stacks report decode/prefill/PPL **when KV uses their dtypes** (`iso3`, `planar3`, `turbo3`). All MI300X numbers elsewhere in this report are separate measurements.
+
+**Why `turbo3/turbo3` shows 10.3× but our TurboQuant (TQ3) is 4.923×:** Compression ratio is **bytes-on-wire for one KV head vector**, not the algorithm name alone. In **this** repository, TurboQuant 3-bit uses the layout in §3.1 (**52 B / 128-dim vector** → **256/52 ≈ 4.923×** vs FP16). The **llama.cpp `turbo3`** row uses **their** packed KV layout for that dtype, which the upstream table summarizes as **~10.3×** for symmetric 3-bit K+V **in the same column as `iso3`/`planar3`**. So **10.3× and 4.923× are two different storage formats**, both loosely “TurboQuant 3-bit” in different codebases — not a single universal ratio.
+
+### Symmetric 3-bit K+V (upstream table, model + GPU as cited there)
+
+**What the names mean:** In llama.cpp / RotorQuant README these rows are labeled `iso3`, `planar3`, `turbo3`. The digit is the **bit width** (3-bit KV after each method’s rotation). **TurboQuant** is the **`turbo3`** line in that stack. **IsoQuant** ↔ `iso3`, **PlanarQuant** ↔ `planar3`. Readable names below; dtype strings in the second column.
+
+| Keys / Values | llama.cpp dtype | Decode tok/s | Prefill tok/s | PPL (wiki-2) | vs FP16 | Compression |
+|---|---|---:|---:|---:|---:|---:|
+| FP16 / FP16 | `f16/f16` | 140 | 6,156 | 6.63 | baseline | 1.0× |
+| IsoQuant (3-bit) / IsoQuant (3-bit) | `iso3/iso3` | 118 | 3,397 | 6.91 | +4.2% | 10.3× |
+| PlanarQuant (3-bit) / PlanarQuant (3-bit) | `planar3/planar3` | 119 | 3,822 | 7.05 | +6.3% | 10.3× |
+| **TurboQuant (3-bit) / TurboQuant (3-bit)** | `turbo3/turbo3` | 93 | 722 | 7.07 | +6.6% | 10.3× |
+| PlanarQuant (3-bit) / TurboQuant (3-bit) | `planar3/turbo3` | 127 | — | 6.68 | +0.8% | 10.3× |
+| PlanarQuant (3-bit) K + FP16 V | `planar3/f16` | 134 | — | ~6.63 | ~0% | 5.1× |
+
+*RotorQuant does not appear in this upstream table. On MI300X, RotorQuant is benchmarked in the v2 report body alongside PlanarQuant, IsoQuant, and TurboQuant.*
+
+![Headline Compression Comparisons](figures/fig11_headline_comparison.png)
+
+### Headline results (who is better)
+
+- Symmetric 10.3× compression — speed: **PlanarQuant** and **IsoQuant** (both 3-bit K+V) are much faster than **TurboQuant** (3-bit K+V).
+- Symmetric 10.3× compression — quality (PPL): **IsoQuant** edges **PlanarQuant** and **TurboQuant** among fully compressed K+V rows.
+- Symmetric 10.3× compression — prefill: **PlanarQuant** (`3,822 tok/s`) is fastest; **TurboQuant** (`722 tok/s`) is slowest.
+- Best practical quality/memory tradeoff: **PlanarQuant** 3-bit **K** + FP16 **V** (`planar3/f16`) keeps near-FP16 quality (~0% PPL delta) at **5.1×** compression.
+- In **this external table only**, symmetric rows share the upstream **10.3×** figure for that layout. **TurboQuant** is not best-in-class there on decode, prefill, or PPL. **Our** measured TurboQuant path is **TQ3 at 4.923×** (§3.1–3.2) — different format, different ratio; do not merge the two into one number.
 
 ---
 
@@ -563,7 +606,7 @@ Avoids the HIP ABI conflict by compiling JIT through Triton's ROCm backend (no `
 | `baselines/int4_baseline.py` | INT4 symmetric KV cache decode tok/s |
 | `benchmarks/bench_tq3_decode.py` | TQ3/TQ4 end-to-end decode vs FP16 |
 | `benchmarks/bench_quality.py` | Perplexity + KV cosine similarity |
-| `report/generate_figures.py` | Produces all 10 figures from JSON results |
+| `report/generate_figures.py` | Produces all 11 figures from JSON results |
 | `benchmarks/bench_triton_attention.py` | **Triton fused TQ3 vs FP16 and Python TQ3** |
 | `benchmarks/bench_batch_attention.py` | **Batch × seq scaling: kernel-only TQ3 vs FP16** |
 
@@ -926,7 +969,8 @@ a single forward pass.  At batch ≥ 16 (typical production serving load):
 | [Fig 7](figures/fig7_attention_speedup.png) | Attention speedup: FP16 vs TQ3 Python wrapper (8 KV heads) |
 | [Fig 8](figures/fig8_dashboard.png) | Summary dashboard (2×2 grid) |
 | [Fig 9](figures/fig9_max_context.png) | Maximum context length per scheme on 192 GB MI300X |
-|| [Fig 10](figures/fig10_triton_speedup.png) | **Triton fused TQ3: measured speedup vs FP16 and Python wrapper** |
+| [Fig 10](figures/fig10_triton_speedup.png) | Triton fused TQ3: measured speedup vs FP16 and Python wrapper |
+| [Fig 11](figures/fig11_headline_comparison.png) | Headline compression comparisons (decode, prefill, PPL, compression) |
 
 ## Appendix B: Raw Result Files
 

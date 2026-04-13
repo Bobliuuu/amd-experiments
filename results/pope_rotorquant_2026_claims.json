@@ -1,0 +1,13 @@
+{
+  "_source": "Author-reported RotorQuant headline metrics (Pope, March 2026). Primary write-up: https://www.scrya.com/rotorquant — code: https://github.com/scrya-com/rotorquant",
+  "cuda_speedup_min": 10,
+  "cuda_speedup_max": 19,
+  "metal_speedup_min": 9,
+  "metal_speedup_max": 31,
+  "params_rotor": 372,
+  "params_dxd_matmul": 16399,
+  "param_reduction_x": 44,
+  "attention_fidelity_pct": 99.0,
+  "fidelity_model": "Qwen2.5-3B",
+  "fidelity_metric": "Cosine similarity vs FP attention"
+}

@@ -696,6 +696,90 @@ def fig_triton_speedup():
 
 
 # ════════════════════════════════════════════════════════════════════════════
+# Figure 11 — Headline compression comparison (external reference table)
+# ════════════════════════════════════════════════════════════════════════════
+def fig_headline_comparison():
+    fig, axes = plt.subplots(2, 2, figsize=(14, 9))
+    fig.patch.set_facecolor(BG_DARK)
+    for ax in axes.flat:
+        ax.set_facecolor(BG_CARD)
+
+    # Labels = method names; llama.cpp dtypes were iso3/planar3/turbo3 (= 3-bit KV).
+    rows = [
+        ("FP16\nK + V", 140, 6156, 6.63, 1.0, "#888888"),
+        ("IsoQuant\n(3-bit K+V)", 118, 3397, 6.91, 10.3, "#22AA22"),
+        ("PlanarQuant\n(3-bit K+V)", 119, 3822, 7.05, 10.3, "#2244DD"),
+        ("TurboQuant\n(3-bit K+V)", 93, 722, 7.07, 10.3, AMD_RED),
+        ("PlanarQuant K\nTurboQuant V", 127, None, 6.68, 10.3, "#2244DD"),
+        ("PlanarQuant K\n+ FP16 V", 134, None, 6.63, 5.1, "#2244DD"),
+    ]
+    names = [r[0] for r in rows]
+    decode = [r[1] for r in rows]
+    prefill = [r[2] for r in rows]
+    ppl = [r[3] for r in rows]
+    comp = [r[4] for r in rows]
+    colors = [r[5] for r in rows]
+    x = np.arange(len(rows))
+
+    ax = axes[0, 0]
+    bars = ax.bar(x, decode, color=colors, width=0.7)
+    ax.set_xticks(x)
+    ax.set_xticklabels(names, rotation=28, ha="right")
+    ax.set_ylabel("Decode tok/s")
+    ax.set_title("Decode Throughput (higher is better)")
+    ax.grid(True, axis="y", alpha=0.35)
+    for b, v in zip(bars, decode):
+        ax.text(b.get_x() + b.get_width()/2, v + 2, f"{v}", ha="center", va="bottom", fontsize=8)
+
+    ax = axes[0, 1]
+    pvals = [v if v is not None else 0 for v in prefill]
+    bars = ax.bar(x, pvals, color=colors, width=0.7)
+    ax.set_xticks(x)
+    ax.set_xticklabels(names, rotation=28, ha="right")
+    ax.set_ylabel("Prefill tok/s")
+    ax.set_title("Prefill Throughput (higher is better)")
+    ax.grid(True, axis="y", alpha=0.35)
+    for i, (b, v) in enumerate(zip(bars, prefill)):
+        if v is None:
+            ax.text(i, 90, "n/a", ha="center", va="bottom", fontsize=8)
+        else:
+            ax.text(b.get_x() + b.get_width()/2, v + 40, f"{v:,}", ha="center", va="bottom", fontsize=8)
+
+    ax = axes[1, 0]
+    bars = ax.bar(x, ppl, color=colors, width=0.7)
+    ax.set_xticks(x)
+    ax.set_xticklabels(names, rotation=28, ha="right")
+    ax.set_ylabel("PPL (WikiText-2)")
+    ax.set_title("Quality (lower is better)")
+    ax.grid(True, axis="y", alpha=0.35)
+    ax.axhline(6.63, color="#AAAAAA", lw=1.0, ls="--", alpha=0.6)
+    for b, v in zip(bars, ppl):
+        ax.text(b.get_x() + b.get_width()/2, v + 0.02, f"{v:.2f}", ha="center", va="bottom", fontsize=8)
+
+    ax = axes[1, 1]
+    bars = ax.bar(x, comp, color=colors, width=0.7)
+    ax.set_xticks(x)
+    ax.set_xticklabels(names, rotation=28, ha="right")
+    ax.set_ylabel("Compression vs FP16")
+    ax.set_title("Compression (higher is better)")
+    ax.grid(True, axis="y", alpha=0.35)
+    for b, v in zip(bars, comp):
+        ax.text(b.get_x() + b.get_width()/2, v + 0.12, f"{v:.1f}×", ha="center", va="bottom", fontsize=8)
+
+    fig.suptitle(
+        "External reference (RotorQuant / llama.cpp README) — not measured on MI300X\n"
+        "10.3× = upstream layout; this repo’s TQ3 = 4.923× (different KV packing)",
+        fontsize=11, color="#FFFFFF", fontweight="bold"
+    )
+    fig.tight_layout()
+
+    out = FIGURES / "fig11_headline_comparison.png"
+    fig.savefig(out, bbox_inches="tight", facecolor=BG_DARK)
+    plt.close(fig)
+    print(f"  ✓ {out.name}")
+
+
+# ════════════════════════════════════════════════════════════════════════════
 # Main
 # ════════════════════════════════════════════════════════════════════════════
 if __name__ == "__main__":
@@ -710,4 +794,5 @@ if __name__ == "__main__":
     fig_dashboard()
     fig_max_context()
     fig_triton_speedup()
+    fig_headline_comparison()
     print(f"\nAll figures saved to {FIGURES}/")

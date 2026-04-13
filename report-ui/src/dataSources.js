@@ -4,9 +4,21 @@ async function fetchFirst(urls) {
   for (const url of urls) {
     try {
       const resp = await fetch(url);
-      if (resp.ok) {
-        return { text: await resp.text(), sourceUrl: url };
+      if (!resp.ok) {
+        continue;
       }
+
+      const contentType = (resp.headers.get("content-type") || "").toLowerCase();
+      const text = await resp.text();
+      const looksLikeHtml =
+        contentType.includes("text/html") || /^\s*<!doctype html>/i.test(text);
+
+      // Dev servers can return index.html for missing routes with 200.
+      if (looksLikeHtml) {
+        continue;
+      }
+
+      return { text, sourceUrl: url };
     } catch {
       // Continue through fallback list.
     }
@@ -17,8 +29,8 @@ async function fetchFirst(urls) {
 export async function loadReportMarkdown(kind) {
   const fileName = kind === "v2" ? "final_report_v2.md" : "final_report.md";
   const sources = [
-    `/@fs${ABS_ROOT}/report/${fileName}`,
     `/content/${fileName}`,
+    `/@fs${ABS_ROOT}/report/${fileName}`,
   ];
   return fetchFirst(sources);
 }
@@ -56,8 +68,8 @@ export function getFigureUrls(kind) {
     name,
     label: name.replace(/\.png$/, "").replaceAll("_", " "),
     srcCandidates: [
-      `/@fs${ABS_ROOT}/report/${base}/${name}`,
       `/content/${base}/${name}`,
+      `/@fs${ABS_ROOT}/report/${base}/${name}`,
     ],
   }));
 }

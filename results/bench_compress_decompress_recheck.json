@@ -1,0 +1,58 @@
+[
+  {
+    "method": "planar",
+    "bits": 3,
+    "n_vectors": 4096,
+    "head_dim": 128,
+    "compress_us": 66.32899749092758,
+    "decompress_us": 34.96349381748587,
+    "compress_bw_gbs": 19.019856287931326,
+    "decompress_bw_gbs": 36.08243519899797,
+    "fp16_bytes_in": 1048576,
+    "compressed_bytes": 212992,
+    "compression_ratio": 4.923076923076923,
+    "fmas_per_vec": 256
+  },
+  {
+    "method": "iso",
+    "bits": 3,
+    "n_vectors": 4096,
+    "head_dim": 128,
+    "compress_us": 58.15100303152576,
+    "decompress_us": 35.55250441422686,
+    "compress_bw_gbs": 21.694690275867785,
+    "decompress_bw_gbs": 35.48464505626121,
+    "fp16_bytes_in": 1048576,
+    "compressed_bytes": 212992,
+    "compression_ratio": 4.923076923076923,
+    "fmas_per_vec": 512
+  },
+  {
+    "method": "rotor",
+    "bits": 3,
+    "n_vectors": 4096,
+    "head_dim": 128,
+    "compress_us": 74.514995503705,
+    "decompress_us": 35.808006941806525,
+    "compress_bw_gbs": 16.93039087598513,
+    "decompress_bw_gbs": 35.231449827694696,
+    "fp16_bytes_in": 1048576,
+    "compressed_bytes": 212992,
+    "compression_ratio": 4.923076923076923,
+    "fmas_per_vec": 1176
+  },
+  {
+    "method": "turbo",
+    "bits": 3,
+    "n_vectors": 4096,
+    "head_dim": 128,
+    "compress_us": 452.61250488692895,
+    "decompress_us": 303.52448811754584,
+    "compress_bw_gbs": 2.7873025742299435,
+    "decompress_bw_gbs": 4.1563961043941635,
+    "fp16_bytes_in": 1048576,
+    "compressed_bytes": 212992,
+    "compression_ratio": 4.923076923076923,
+    "fmas_per_vec": 16384
+  }
+]

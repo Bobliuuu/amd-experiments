@@ -1,0 +1,38 @@
+[
+  {
+    "method": "planar",
+    "bits": 3,
+    "cosine_sim_mean": 0.9829403758049011,
+    "cosine_sim_std": 0.0030535703990608454,
+    "cosine_sim_min": 0.9669276475906372,
+    "cosine_sim_p5": 0.977118968963623,
+    "mse": 0.03422579914331436
+  },
+  {
+    "method": "iso",
+    "bits": 3,
+    "cosine_sim_mean": 0.9830920696258545,
+    "cosine_sim_std": 0.003167778020724654,
+    "cosine_sim_min": 0.9616600871086121,
+    "cosine_sim_p5": 0.977310299873352,
+    "mse": 0.033797487616539
+  },
+  {
+    "method": "rotor",
+    "bits": 3,
+    "cosine_sim_mean": 0.9830259084701538,
+    "cosine_sim_std": 0.0031843483448028564,
+    "cosine_sim_min": 0.9649244546890259,
+    "cosine_sim_p5": 0.9771510362625122,
+    "mse": 0.03408385440707207
+  },
+  {
+    "method": "turbo",
+    "bits": 3,
+    "cosine_sim_mean": 0.9829344749450684,
+    "cosine_sim_std": 0.003285776823759079,
+    "cosine_sim_min": 0.960132896900177,
+    "cosine_sim_p5": 0.9764842987060547,
+    "mse": 0.034275297075510025
+  }
+]
