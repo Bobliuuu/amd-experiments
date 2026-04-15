@@ -466,6 +466,27 @@ CDNA3 vs 4 cycles for VALU). The gather dominated, not the memory bandwidth.
 ~**0.43–0.45x** of FP16 across 4K-131K context, i.e. about **2.3x slower** than FP16 (improved
 from ~6x slower in v1).*
 
+### 5.9.1 Split-K Update (new): long-context crossover at batch=1
+
+![Normalized Fused Attention vs FP16 (Split-K)](figures/fig12_fused_vs_fp16_normalized.png)
+
+*New measurement with Split-K sequence parallelism enabled in the fused bit-plane kernel
+(`turboquant_attention_fwd(..., use_split_k=True)`): short contexts remain below FP16, but
+the fused kernel reaches parity near 16K and overtakes FP16 at 32K+ context.*
+
+| seq_k | FP16 (ms) | Python TQ3 (ms) | Fused TQ3 Split-K (ms) | Fused vs FP16 |
+|-------|-----------|-----------------|-------------------------|---------------|
+| 1,024 | 0.054 | 0.912 | 0.155 | 0.35× |
+| 4,096 | 0.188 | 2.338 | 0.485 | 0.39× |
+| 16,384 | 0.725 | 9.409 | 0.729 | 1.00× |
+| 32,768 | 1.534 | 18.560 | 1.336 | 1.15× |
+| 65,536 | 3.058 | 36.681 | 2.063 | 1.48× |
+| 131,072 | 6.109 | 73.462 | 3.289 | 1.86× |
+
+This update changes the practical takeaway: the fused path is no longer only a "still slower"
+story at batch=1. With enough sequence length, exposing sequence-parallel work allows the TQ3
+kernel to convert KV byte reduction into real wall-clock speedup versus FP16.
+
 **Root-cause analysis of the 6× gap:**
 
 The attention matmul at decode (1 query token × S_k) is inherently tiny — at 131K context,
@@ -1246,6 +1267,7 @@ a single forward pass.  At batch ≥ 16 (typical production serving load):
 | [Fig 9](figures/fig9_max_context.png) | Maximum context length per scheme on 192 GB MI300X |
 | [Fig 10](figures/fig10_triton_speedup.png) | Triton fused TQ3: measured speedup vs FP16 and Python wrapper |
 | [Fig 11](figures/fig11_headline_comparison.png) | Headline compression comparisons (decode, prefill, PPL, compression) |
+| [Fig 12](figures/fig12_fused_vs_fp16_normalized.png) | Normalized fused attention vs FP16 (Split-K update) |
 
 ## Appendix B: Raw Result Files
 

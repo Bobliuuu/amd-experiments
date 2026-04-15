@@ -172,6 +172,13 @@ Primary outputs:
 
 ## Component READMEs
 
+- `benchmarks/README.md` — runnable benchmark entry points and quick commands
+- `baselines/README.md` — FP16/FP8/INT4 baseline commands
+- `scripts/README.md` — consolidation/showcase utility commands
+- `profiling/README.md` — profiling utility usage
+- `analysis/README.md` — plotting command reference
+- `report/README.md` — report figure generation commands
+- `kernels/README.md` — kernel component map and runnable HIP entry points
 - `report-ui/README.md` — run/build the interactive report UI and refresh its content assets
 - `kernels/hip/README.md` — build/test/benchmark HIP binaries on MI300X
 - `notebooks/README.md` — use the consolidation notebook or equivalent script commands

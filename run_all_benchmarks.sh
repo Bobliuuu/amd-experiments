@@ -12,7 +12,13 @@
 set -euo pipefail
 
 MODEL="${1:-mistralai/Mistral-7B-v0.1}"
-SEQ_LENS="${2:-512 2048 8192 32768 65536 131072}"
+shift || true
+DEFAULT_SEQ_LENS=(512 2048 8192 32768 65536 131072)
+if [ "$#" -gt 0 ]; then
+    SEQ_LENS=("$@")
+else
+    SEQ_LENS=("${DEFAULT_SEQ_LENS[@]}")
+fi
 N_DECODE=30
 N_RUNS=3
 
@@ -27,7 +33,7 @@ timestamp() { date '+%Y-%m-%d %H:%M:%S'; }
 echo "================================================================"
 echo "TurboQuant MI300X Full Benchmark Suite"
 echo "Model:     $MODEL"
-echo "Seq lens:  $SEQ_LENS"
+echo "Seq lens:  ${SEQ_LENS[*]}"
 echo "N_decode:  $N_DECODE  N_runs: $N_RUNS"
 echo "Started:   $(timestamp)"
 echo "================================================================"
@@ -43,7 +49,7 @@ echo
 # 0b. Attention throughput vs context length (no model needed)
 echo "[$(timestamp)] Step 0b: Attention throughput benchmark ..."
 python3 benchmarks/bench_tq_attention.py \
-    --seq-lens $SEQ_LENS --n-iters 20 \
+    --seq-lens "${SEQ_LENS[@]}" --n-iters 20 \
     2>&1 | tee "$LOG_DIR/bench_tq_attention.log"
 echo
 
@@ -51,7 +57,7 @@ echo
 echo "[$(timestamp)] Step 1: FP16 baseline ..."
 python3 baselines/fp16_baseline.py \
     --model "$MODEL" \
-    --seq-lens $SEQ_LENS \
+    --seq-lens "${SEQ_LENS[@]}" \
     --n-decode "$N_DECODE" --n-runs "$N_RUNS" \
     2>&1 | tee "$LOG_DIR/fp16_baseline.log"
 echo
@@ -60,7 +66,7 @@ echo
 echo "[$(timestamp)] Step 2: FP8 baseline ..."
 python3 baselines/fp8_baseline.py \
     --model "$MODEL" \
-    --seq-lens $SEQ_LENS \
+    --seq-lens "${SEQ_LENS[@]}" \
     --n-decode "$N_DECODE" --n-runs "$N_RUNS" \
     2>&1 | tee "$LOG_DIR/fp8_baseline.log"
 echo
@@ -69,7 +75,7 @@ echo
 echo "[$(timestamp)] Step 3: INT4 baseline ..."
 python3 baselines/int4_baseline.py \
     --model "$MODEL" \
-    --seq-lens $SEQ_LENS \
+    --seq-lens "${SEQ_LENS[@]}" \
     --n-decode "$N_DECODE" --n-runs "$N_RUNS" \
     2>&1 | tee "$LOG_DIR/int4_baseline.log"
 echo
