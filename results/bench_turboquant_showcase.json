@@ -1,0 +1,89 @@
+{
+  "quality": {
+    "n_queries": 80,
+    "output_cosine": {
+      "mean": 0.9642842963337899,
+      "min": 0.911456823348999,
+      "max": 0.9796152710914612
+    },
+    "weight_cosine": {
+      "mean": 0.9820538245141506,
+      "min": 0.9527727365493774,
+      "max": 0.9883998036384583
+    },
+    "max_abs_weight_error": {
+      "mean": 0.0026660799980163575,
+      "max": 0.011932373046875
+    },
+    "per_layer_mean_output_cosine": {
+      "0": 0.9623512029647827,
+      "7": 0.967286966741085,
+      "14": 0.9638493992388248,
+      "21": 0.9658148288726807,
+      "27": 0.9621190838515759
+    },
+    "figure": "/root/workspace/amd-experiments/report/figures_v2/fig27_tq_attention_quality_hist.png"
+  },
+  "latency_table": [
+    {
+      "seq_k": 512,
+      "fp16_us": 39.0032198629342,
+      "fused_us": 107.85064980154857,
+      "fused_nb_us": 93.2579001528211
+    },
+    {
+      "seq_k": 1024,
+      "fp16_us": 38.30055007711053,
+      "fused_us": 143.6900399858132,
+      "fused_nb_us": 115.45229994226247
+    },
+    {
+      "seq_k": 2048,
+      "fp16_us": 38.472099986393005,
+      "fused_us": 269.07178980764,
+      "fused_nb_us": 218.99965999182314
+    },
+    {
+      "seq_k": 4096,
+      "fp16_us": 38.06658001849428,
+      "fused_us": 424.2606501793489,
+      "fused_nb_us": 424.78799005039036
+    },
+    {
+      "seq_k": 8192,
+      "fp16_us": 38.45325001748279,
+      "fused_us": 456.9407401140779,
+      "fused_nb_us": 837.3224499518983
+    },
+    {
+      "seq_k": 16384,
+      "fp16_us": 39.950770151335746,
+      "fused_us": 432.4001198983751,
+      "fused_nb_us": 1661.486360244453
+    }
+  ],
+  "roofline": {
+    "figure": "/root/workspace/amd-experiments/report/figures_v2/fig28_mi300x_roofline_tq_attention.png",
+    "ridge_flop_per_byte": 0.07226415094339622,
+    "measured_points": {
+      "fp16": {
+        "ai": 1.01,
+        "perf_tflops": 8.319754150845649
+      },
+      "tq_measured_fused": {
+        "ai": 1.21,
+        "perf_tflops": 0.9230781124448905
+      }
+    },
+    "target_point": {
+      "tq_aspirational": {
+        "ai": 640.0,
+        "perf_tflops": 383.0
+      }
+    }
+  },
+  "memory": {
+    "figure_memory_curve": "/root/workspace/amd-experiments/report/figures_v2/fig29_kv_cache_memory_curve.png",
+    "figure_component_breakdown": "/root/workspace/amd-experiments/report/figures_v2/fig30_kv_component_breakdown.png"
+  }
+}

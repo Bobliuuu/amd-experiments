@@ -1,3 +1,9 @@
+/**
+ * NavBar.jsx — Fixed top navigation bar
+ *
+ * AMD-branded header with section pill links (smooth-scroll anchors)
+ * and a live status indicator.
+ */
 import { motion } from "framer-motion";
 
 export default function NavBar() {
@@ -14,6 +20,7 @@ export default function NavBar() {
       <nav className="nav-pills">
         <a href="#problem" className="nav-pill">Problem</a>
         <a href="#math" className="nav-pill">Mathematics</a>
+        <a href="#compression" className="nav-pill">Compression</a>
         <a href="#results" className="nav-pill">Results</a>
         <a href="#reasoning" className="nav-pill">Reasoning</a>
         <a href="#conclusion" className="nav-pill">Conclusion</a>

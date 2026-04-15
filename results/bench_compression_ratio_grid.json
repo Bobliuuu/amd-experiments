@@ -1,0 +1,125 @@
+{
+  "device": "AMD Instinct MI300X VF",
+  "results": [
+    {
+      "bits": 2,
+      "ctx_tokens": 2048,
+      "layers": 28,
+      "kv_heads": 2,
+      "head_dim": 128,
+      "fp16_bytes": 29360128,
+      "compressed_bytes_measured": 4128768,
+      "compression_ratio_measured": 7.111111111111111
+    },
+    {
+      "bits": 2,
+      "ctx_tokens": 4096,
+      "layers": 28,
+      "kv_heads": 2,
+      "head_dim": 128,
+      "fp16_bytes": 58720256,
+      "compressed_bytes_measured": 8257536,
+      "compression_ratio_measured": 7.111111111111111
+    },
+    {
+      "bits": 2,
+      "ctx_tokens": 8192,
+      "layers": 28,
+      "kv_heads": 2,
+      "head_dim": 128,
+      "fp16_bytes": 117440512,
+      "compressed_bytes_measured": 16515072,
+      "compression_ratio_measured": 7.111111111111111
+    },
+    {
+      "bits": 2,
+      "ctx_tokens": 16384,
+      "layers": 28,
+      "kv_heads": 2,
+      "head_dim": 128,
+      "fp16_bytes": 234881024,
+      "compressed_bytes_measured": 33030144,
+      "compression_ratio_measured": 7.111111111111111
+    },
+    {
+      "bits": 3,
+      "ctx_tokens": 2048,
+      "layers": 28,
+      "kv_heads": 2,
+      "head_dim": 128,
+      "fp16_bytes": 29360128,
+      "compressed_bytes_measured": 5963776,
+      "compression_ratio_measured": 4.923076923076923
+    },
+    {
+      "bits": 3,
+      "ctx_tokens": 4096,
+      "layers": 28,
+      "kv_heads": 2,
+      "head_dim": 128,
+      "fp16_bytes": 58720256,
+      "compressed_bytes_measured": 11927552,
+      "compression_ratio_measured": 4.923076923076923
+    },
+    {
+      "bits": 3,
+      "ctx_tokens": 8192,
+      "layers": 28,
+      "kv_heads": 2,
+      "head_dim": 128,
+      "fp16_bytes": 117440512,
+      "compressed_bytes_measured": 23855104,
+      "compression_ratio_measured": 4.923076923076923
+    },
+    {
+      "bits": 3,
+      "ctx_tokens": 16384,
+      "layers": 28,
+      "kv_heads": 2,
+      "head_dim": 128,
+      "fp16_bytes": 234881024,
+      "compressed_bytes_measured": 47710208,
+      "compression_ratio_measured": 4.923076923076923
+    },
+    {
+      "bits": 4,
+      "ctx_tokens": 2048,
+      "layers": 28,
+      "kv_heads": 2,
+      "head_dim": 128,
+      "fp16_bytes": 29360128,
+      "compressed_bytes_measured": 7798784,
+      "compression_ratio_measured": 3.764705882352941
+    },
+    {
+      "bits": 4,
+      "ctx_tokens": 4096,
+      "layers": 28,
+      "kv_heads": 2,
+      "head_dim": 128,
+      "fp16_bytes": 58720256,
+      "compressed_bytes_measured": 15597568,
+      "compression_ratio_measured": 3.764705882352941
+    },
+    {
+      "bits": 4,
+      "ctx_tokens": 8192,
+      "layers": 28,
+      "kv_heads": 2,
+      "head_dim": 128,
+      "fp16_bytes": 117440512,
+      "compressed_bytes_measured": 31195136,
+      "compression_ratio_measured": 3.764705882352941
+    },
+    {
+      "bits": 4,
+      "ctx_tokens": 16384,
+      "layers": 28,
+      "kv_heads": 2,
+      "head_dim": 128,
+      "fp16_bytes": 234881024,
+      "compressed_bytes_measured": 62390272,
+      "compression_ratio_measured": 3.764705882352941
+    }
+  ]
+}

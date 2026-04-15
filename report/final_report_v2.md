@@ -59,41 +59,6 @@ Column headers use **PlanarQuant (3-bit)** style: the **3** is **3-bit** KV quan
 
 **RotorQuant conclusion**: Uses 4.6× more FMAs than PlanarQuant, achieves slower kernel throughput, and has **worse** published PPL at both 3-bit and 4-bit. There is no regime on MI300X where RotorQuant is the correct choice over PlanarQuant.
 
-## Headline Compression Comparisons
-
-### External reference table (not measured on MI300X)
-
-The table below is **not** from AMD MI300X runs in this project. Values are taken from **RotorQuant / llama.cpp**-style published results (typically quoted for **Llama 3.1 8B Instruct Q4_K_M** and a **consumer NVIDIA GPU** in the upstream README, e.g. RTX 5090). **We do not have that GPU here.** Use this block as **cross-ecosystem context** only; MI300X throughput, prefill, and layout-specific compression are in the rest of this report.
-
-**Why `turbo3/turbo3` is 10.3× here but our TQ3 is 4.923×:** **Compression = bytes stored per head vector** for a **specific KV layout**. This repo’s TurboQuant 3-bit (**TQ3**) is **52 B / 128-dim vector** → **4.923×** vs FP16 (§1.1). The upstream **`turbo3`** dtype uses **their** packing and reports **~10.3×** in the same symmetric column as `iso3`/`planar3`. Same family name, **two different on-disk formats** — the ratios are not interchangeable.
-
-### Symmetric 3-bit K+V (upstream citation: model + GPU as in README)
-
-**What the names mean:** README tables use `iso3`, `planar3`, `turbo3`. The **3** is **3-bit** K/V after rotation. **TurboQuant** is the **`turbo3`** row in that stack. Below: readable names + dtype strings.
-
-| Keys / Values | llama.cpp dtype | Decode tok/s | Prefill tok/s | PPL (wiki-2) | vs FP16 | Compression |
-|---|---|---:|---:|---:|---:|---:|
-| FP16 / FP16 | `f16/f16` | 140 | 6,156 | 6.63 | baseline | 1.0× |
-| IsoQuant (3-bit) / IsoQuant (3-bit) | `iso3/iso3` | 118 | 3,397 | 6.91 | +4.2% | 10.3× |
-| PlanarQuant (3-bit) / PlanarQuant (3-bit) | `planar3/planar3` | 119 | 3,822 | 7.05 | +6.3% | 10.3× |
-| **TurboQuant (3-bit) / TurboQuant (3-bit)** | `turbo3/turbo3` | 93 | 722 | 7.07 | +6.6% | 10.3× |
-| PlanarQuant (3-bit) / TurboQuant (3-bit) | `planar3/turbo3` | 127 | — | 6.68 | +0.8% | 10.3× |
-| PlanarQuant (3-bit) K + FP16 V | `planar3/f16` | 134 | — | ~6.63 | ~0% | 5.1× |
-
-*RotorQuant is benchmarked on MI300X in later sections; it is not in this upstream headline table.*
-
-![Headline Compression Comparisons](figures_v2/fig21_headline_compression_comparison.png)
-
-### Headline results (what matters in practice)
-
-- Symmetric 10.3× K+V — decode speed: **PlanarQuant** and **IsoQuant** are effectively tied, both ahead of **TurboQuant (3-bit)**.
-- Symmetric 10.3× K+V — PPL: **IsoQuant** is slightly better than **PlanarQuant** and **TurboQuant** among fully symmetric rows.
-- Symmetric 10.3× K+V — prefill: **PlanarQuant** leads (`3,822 tok/s`), **IsoQuant** second (`3,397 tok/s`), **TurboQuant** far behind (`722 tok/s`).
-- Best quality vs memory in this table: **PlanarQuant** 3-bit K + FP16 V (`planar3/f16`) — near-FP16 PPL at **5.1×** compression.
-- In **this external table**, symmetric rows use the upstream **10.3×** figure for that layout; **TurboQuant** is not the best choice there on decode, prefill, or PPL. On **MI300X** we implement **TQ3** at **4.923×** (§1.1) — a **different** KV format than the llama.cpp **`turbo3`** line; do not treat the two ratios as one.
-
----
-
 ## 1. Methods Overview
 
 ### 1.1 TurboQuant (Google, 2024)
@@ -149,6 +114,26 @@ We now test the same claim categories in this environment (ROCm / MI300X) and co
 | **PlanarQuant** | **6.82x** (compress), **8.68x** (decompress) | **128.00x** fewer (128 vs 16,384) | **98.29%** | n/a (author headline is Rotor-only) |
 | **IsoQuant** | **7.78x** (compress), **8.54x** (decompress) | **128.00x** fewer (128 vs 16,384) | **98.31%** | n/a (author headline is Rotor-only) |
 | **RotorQuant** | **6.07x** (compress), **8.48x** (decompress) | **95.26x** fewer (172 vs 16,384) | **98.30%** | **10-19x** speedup, **44x** fewer params, **99.0%** cosine |
+
+#### Calculated vs measured ratio (explicit empirical check)
+
+To avoid ambiguity, this report now uses two separate fields:
+
+- **`ratio_calculated_layout`**: direct byte-layout formula (for 3-bit, `256 / 52 = 4.923x`).
+- **`ratio_observed_runtime`**: measured from materialized cache buffers in a real prefill run: `kv_bytes_fp16 / kv_bytes_compressed_materialized`.
+
+Empirical run source: `results/bench_runtime_ratio_all_methods.json`, merged with speed/fidelity as `results/bench_empirical_kv_validation.json`.
+
+**Important interpretation:** TurboQuant buffers in this repo are already packed to the target block width (e.g., 52 B/vector at 3-bit), so measured and calculated ratios match for Turbo. Current block-method Python/Triton objects store richer structures (`indices` + `norms`) and are **not bit-packed to 52 B/vector yet**, so their measured runtime ratio is lower than the theoretical layout ratio.
+
+| Method | ratio_calculated_layout | ratio_observed_runtime | compress_speedup_vs_turbo | decompress_speedup_vs_turbo | cosine_sim_mean |
+|---|---:|---:|---:|---:|---:|
+| TurboQuant3 | 4.923x | 4.923x | 1.00x | 1.00x | 0.9829 |
+| PlanarQuant3 | 4.923x | 1.939x | 6.82x | 8.68x | 0.9829 |
+| IsoQuant3 | 4.923x | 1.939x | 7.78x | 8.54x | 0.9831 |
+| RotorQuant3 | 4.923x | 1.925x | 6.07x | 8.48x | 0.9830 |
+
+![Empirical KV validation — calculated vs measured ratio + Turbo-baseline deltas](figures_v2/fig26_empirical_kv_validation.png)
 
 ![Pope (2026) RotorQuant headline claims — four claim types (author-reported, CUDA/Metal)](figures_v2/fig24_pope_rotorquant_2026_claims.png)
 
@@ -430,6 +415,7 @@ kernels/
   block_quant_rocm.py          — Unified ROCm Triton impl (IsoQuant, PlanarQuant, RotorQuant)
 benchmarks/
   bench_compress_decompress.py — Kernel microbenchmark
+  bench_runtime_ratio_all_methods.py — Runtime-observed KV ratio from real prefill cache
   bench_prefill.py             — Prefill throughput measurement
   bench_batch_decode_v2.py     — Batch decode throughput
   bench_ppl_all_methods.py     — KV reconstruction quality
@@ -439,8 +425,10 @@ benchmarks/
 vllm/attention/backends/
   isoquant_rocm_attn.py        — vLLM backend extension for IsoQuant/PlanarQuant
 report/
-  generate_figures_v2.py       — All figures for this report (Figs 11–25)
+  generate_figures_v2.py       — All figures for this report (Figs 11–26)
   final_report_v2.md           — This document
+scripts/
+  merge_empirical_kv_validation.py — Join ratio + speed + quality into one artifact
 ```
 
 ---
@@ -496,6 +484,72 @@ Actual packed (4-bit): 4 + ceil(128 × 4 / 8) = 4 + 64 = 68 bytes → 3.765×
 
 Note: Our current implementation stores indices as full int8 (1 byte each) rather than bit-packing to 3-bit. Full bit-packing would achieve the theoretical ratios but requires additional pack/unpack operations. The numbers above assume bit-packed storage.
 
+### Appendix A.1 Measured compression grid (screenshot-style experiment)
+
+We also run the screenshot-style experiment directly in this repo using:
+
+```bash
+python3 benchmarks/bench_compression_ratio_grid.py \
+  --bits 2 3 4 --ctx 2048 4096 8192 16384 \
+  --layers 28 --kv-heads 2 --head-dim 128
+```
+
+This benchmark computes sizes from **materialized compressed tensors** (`compress_tensor(...)` output), not from a formula-only table.
+
+| Bits | 2048 tokens | 4096 tokens | 8192 tokens | 16384 tokens |
+|---|---|---|---|---|
+| 2-bit | 4032 KB vs 28672 KB FP16 (7.11x) | 8064 KB vs 57344 KB FP16 (7.11x) | 16128 KB vs 114688 KB FP16 (7.11x) | 32256 KB vs 229376 KB FP16 (7.11x) |
+| 3-bit | 5824 KB vs 28672 KB FP16 (4.92x) | 11648 KB vs 57344 KB FP16 (4.92x) | 23296 KB vs 114688 KB FP16 (4.92x) | 46592 KB vs 229376 KB FP16 (4.92x) |
+| 4-bit | 7616 KB vs 28672 KB FP16 (3.76x) | 15232 KB vs 57344 KB FP16 (3.76x) | 30464 KB vs 114688 KB FP16 (3.76x) | 60928 KB vs 229376 KB FP16 (3.76x) |
+
+Saved JSON: `results/bench_compression_ratio_grid.json`.
+
+### Appendix A.2 TurboQuant showcase experiments (attention quality, latency, roofline, memory)
+
+To match the screenshot-style experiments (quality panel, latency table, roofline, memory scaling, and component breakdown), run:
+
+```bash
+python3 benchmarks/bench_turboquant_showcase.py \
+  --bits 3 --quality-seq-k 2048 \
+  --output results/bench_turboquant_showcase.json
+```
+
+Or run all showcase experiments with one command:
+
+```bash
+./scripts/run_showcase.sh
+```
+
+This script outputs:
+
+- Attention-quality text summary + histogram panel
+- `seq_k` latency table (`FP16 matmul`, `fused`, `fused+nb` proxy)
+- MI300X roofline-style chart with measured points + aspirational target point
+- KV cache memory scaling curve
+- TQ3 component breakdown chart
+
+Artifacts:
+
+- JSON: `results/bench_turboquant_showcase.json`
+- Figures:
+  - `report/figures_v2/fig27_tq_attention_quality_hist.png`
+  - `report/figures_v2/fig28_mi300x_roofline_tq_attention.png`
+  - `report/figures_v2/fig29_kv_cache_memory_curve.png`
+  - `report/figures_v2/fig30_kv_component_breakdown.png`
+
+![TurboQuant attention quality histogram panel](figures_v2/fig27_tq_attention_quality_hist.png)
+
+![MI300X TurboQuant roofline-style chart](figures_v2/fig28_mi300x_roofline_tq_attention.png)
+
+The roofline figure now separates:
+- **Measured points** (FP16 and current fused-path implementation) derived from the latency table in this showcase run.
+- **Aspirational target point** (fully fused) shown as a theoretical ceiling/reference, not a measured kernel datapoint.
+- Serving-level interpretation should be anchored to measured bottlenecks from `report/rocm_kv_bottleneck_report.md` (fallback gates, runtime overhead, and scheduler behavior), not arithmetic-intensity alone.
+
+![KV cache memory scaling curve](figures_v2/fig29_kv_cache_memory_curve.png)
+
+![TurboQuant 3-bit component breakdown](figures_v2/fig30_kv_component_breakdown.png)
+
 ## Appendix B: FMA Count Derivation
 
 **PlanarQuant** (2D Givens, head_dim=128):
@@ -513,44 +567,7 @@ Note: Our current implementation stores indices as full int8 (1 byte each) rathe
 
 ---
 
-## Appendix C: Kernel glossary (what each piece of GPU code is doing)
-
-This appendix is **additive context** for readers who are not GPU kernel experts. It connects three “worlds”:
-
-1. **TurboQuant on NVIDIA (cuTile)** — a *different codebase*, but an excellent **menu of kernel types** (compress K, compress V, decompress V, score, fused attention). See [turboquant_cutile](https://github.com/DevTechJr/turboquant_cutile) and the local screenshot `docs/turboquant_cutile_kernel_types.png` (same table as upstream README).
-2. **RotorQuant (author narrative)** — fused **CUDA / Metal** pipelines that claim large speedups by keeping the full “embed → sandwich → quantize → inverse → extract” path on-chip; see [RotorQuant @ Scrya](https://www.scrya.com/rotorquant/).
-3. **This MI300X repo** — **Triton** kernels in `kernels/block_quant_rocm.py` plus **TurboQuant** rotation via `torch.matmul` / optional MFMA helper in `kernels/turboquant_mi300x.py`.
-
-### C.1 TurboQuant cuTile kernel types (NVIDIA reference)
-
-| Kernel (cuTile naming) | Plain English |
-|---|---|
-| **Key compression** | Rotate the key vector, run **Lloyd–Max** scalar quantization, store **QJL** 1-bit signs so dot-products stay unbiased later. |
-| **Value compression** | Rotate values, Lloyd–Max to **8 centroids** (3-bit per coordinate bucket). |
-| **Value decompression** | Look up centroids, then **undo the rotation** with \(\Pi^\top\) (inverse orthogonal transform). |
-| **Attention scoring** | Approximate dot product using **compressed values + QJL correction** (MSE-oriented dot + bias fix). |
-| **Fused attention** | One kernel does **scores → softmax → accumulate V** so intermediate tensors are not written back to HBM between steps. |
-
-Why this matters: **fused attention** is the classic way to turn an algorithm from “memory round-trip bound” into “compute bound / higher arithmetic intensity,” which is exactly what a roofline chart talks about (see Appendix D and `fig18_roofline.png`).
-
-### C.2 RotorQuant author pipeline (Clifford rotors)
-
-At a high level, RotorQuant replaces one big \(d \times d\) rotation with **many small \( \mathrm{Cl}(3,0) \) rotors** on **3D chunks** of the vector, then quantizes. The claimed win on CUDA/Metal is from **fusing** those stages; see the walkthrough in [RotorQuant @ Scrya](https://www.scrya.com/rotorquant/).
-
-### C.3 What *this repo* implements on MI300X (ROCm / Triton)
-
-| Logical stage | TurboQuant (this repo) | Planar / Iso / Rotor (this repo) |
-|---|---|---|
-| **Decorrelation (“rotate”)** | Dense random orthogonal \(\Pi \in \mathbb{R}^{128\times128}\) (MFMA or `matmul`) | Block-wise **Givens**, **quaternion**, or **Cl(3,0) sandwich** in Triton |
-| **Quantize** | Lloyd–Max style scalar bins + layout in `turboquant_mi300x.py` | Same **byte layout** per bit-width (`BYTES_PER_VEC` in `block_quant_rocm.py`) |
-| **Decompress** | Inverse rotation + dequant | Inverse block transform + dequant |
-| **Attention** | Measured mostly via PyTorch SDPA / separate benches — **not** the full cuTile “fused attention” stack | Same |
-
-**Important:** the **10–19× / 9–31×** numbers on [scrya.com/rotorquant](https://www.scrya.com/rotorquant/) are for **fused vendor kernels** on **NVIDIA/Apple**. This repo’s §4 microbenchmark is **Triton pack/unpack** on **MI300X**; compare categories carefully (see the MI300X vs author table in §1.4).
-
----
-
-## Appendix D: Latency, timelines, and roofline intuition
+## Appendix C: Latency, timelines, and roofline intuition
 
 ### D.1 Microbenchmark latency (wall clock per call)
 
@@ -578,7 +595,7 @@ This report’s roofline-style chart is **`fig18_roofline.png`**, generated from
 
 ---
 
-## Appendix E: One-command consolidation of all JSON results
+## Appendix D: One-command consolidation of all JSON results
 
 For a verbose rollup of everything under `results/` (including optional recheck files), run:
 
@@ -592,3 +609,7 @@ Or open `notebooks/consolidate_benchmarks.ipynb` for the same flow inside Jupyte
 
 *Report generated programmatically from benchmark data collected on AMD MI300X (gfx942).*
 *Source: `/root/workspace/amd-experiments/` — April 2026*
+
+### Theoretical cross-repo note (kept for context)
+
+One external data point from the RotorQuant/llama.cpp ecosystem reports ~10.3× for their symmetric 3-bit K+V layout; this should be read only as format-specific context and not compared directly against this repo’s measured 52-byte TQ3 layout (4.923×).

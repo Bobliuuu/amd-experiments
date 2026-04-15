@@ -1,3 +1,9 @@
+/**
+ * ReportView.jsx — Legacy markdown-based report viewer (no longer used)
+ *
+ * Replaced by the structured ReportSections.jsx components which render
+ * benchmark data directly without parsing markdown. Kept for reference.
+ */
 import { useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";

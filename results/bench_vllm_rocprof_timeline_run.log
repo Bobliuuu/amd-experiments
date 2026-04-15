@@ -1,0 +1,179 @@
+
+[0;31mWARNING: We are phasing out development and support for roctracer/rocprofiler/rocprof/rocprofv2 in favor of rocprofiler-sdk/rocprofv3 in upcoming ROCm releases. Going forward, only critical defect fixes will be addressed for older versions of profiling tools and libraries. We encourage all users to upgrade to the latest version, rocprofiler-sdk library and rocprofv3 tool, to ensure continued support and access to new features.[0m
+
+INFO 04-15 01:46:44 [utils.py:233] non-default args: {'dtype': 'float16', 'max_model_len': 4096, 'disable_log_stats': True, 'model': 'mistralai/Mistral-7B-v0.1'}
+INFO 04-15 01:46:45 [model.py:549] Resolved architecture: MistralForCausalLM
+WARNING 04-15 01:46:45 [model.py:2016] Casting torch.bfloat16 to torch.float16.
+INFO 04-15 01:46:45 [model.py:1678] Using max model len 4096
+INFO 04-15 01:46:45 [scheduler.py:238] Chunked prefill is enabled with max_num_batched_tokens=16384.
+INFO 04-15 01:46:45 [vllm.py:790] Asynchronous scheduling is enabled.
+WARNING 04-15 01:46:46 [system_utils.py:152] We must use the `spawn` multiprocessing start method. Overriding VLLM_WORKER_MULTIPROC_METHOD to 'spawn'. See https://docs.vllm.ai/en/latest/usage/troubleshooting.html#python-multiprocessing for more information. Reasons: CUDA is initialized
+(EngineCore pid=783523) INFO 04-15 01:46:50 [core.py:105] Initializing a V1 LLM engine (v0.19.0) with config: model='mistralai/Mistral-7B-v0.1', speculative_config=None, tokenizer='mistralai/Mistral-7B-v0.1', skip_tokenizer_init=False, tokenizer_mode=auto, revision=None, tokenizer_revision=None, trust_remote_code=False, dtype=torch.float16, max_seq_len=4096, download_dir=None, load_format=auto, tensor_parallel_size=1, pipeline_parallel_size=1, data_parallel_size=1, decode_context_parallel_size=1, dcp_comm_backend=ag_rs, disable_custom_all_reduce=False, quantization=None, enforce_eager=False, enable_return_routed_experts=False, kv_cache_dtype=auto, device_config=cuda, structured_outputs_config=StructuredOutputsConfig(backend='auto', disable_any_whitespace=False, disable_additional_properties=False, reasoning_parser='', reasoning_parser_plugin='', enable_in_reasoning=False), observability_config=ObservabilityConfig(show_hidden_metrics_for_version=None, otlp_traces_endpoint=None, collect_detailed_traces=None, kv_cache_metrics=False, kv_cache_metrics_sample=0.01, cudagraph_metrics=False, enable_layerwise_nvtx_tracing=False, enable_mfu_metrics=False, enable_mm_processor_stats=False, enable_logging_iteration_details=False), seed=0, served_model_name=mistralai/Mistral-7B-v0.1, enable_prefix_caching=True, enable_chunked_prefill=True, pooler_config=None, compilation_config={'mode': <CompilationMode.VLLM_COMPILE: 3>, 'debug_dump_path': None, 'cache_dir': '', 'compile_cache_save_format': 'binary', 'backend': 'inductor', 'custom_ops': ['+sparse_attn_indexer', 'none'], 'splitting_ops': ['vllm::unified_attention', 'vllm::unified_attention_with_output', 'vllm::unified_mla_attention', 'vllm::unified_mla_attention_with_output', 'vllm::mamba_mixer2', 'vllm::mamba_mixer', 'vllm::short_conv', 'vllm::linear_attention', 'vllm::plamo2_mamba_mixer', 'vllm::gdn_attention_core', 'vllm::olmo_hybrid_gdn_full_forward', 'vllm::kda_attention', 'vllm::sparse_attn_indexer', 'vllm::rocm_aiter_sparse_attn_indexer', 'vllm::unified_kv_cache_update', 'vllm::unified_mla_kv_cache_update'], 'compile_mm_encoder': False, 'cudagraph_mm_encoder': False, 'encoder_cudagraph_token_budgets': [], 'encoder_cudagraph_max_images_per_batch': 0, 'compile_sizes': [], 'compile_ranges_endpoints': [16384], 'inductor_compile_config': {'enable_auto_functionalized_v2': False, 'size_asserts': False, 'alignment_asserts': False, 'scalar_asserts': False, 'combo_kernels': True, 'benchmark_combo_kernel': True}, 'inductor_passes': {}, 'cudagraph_mode': <CUDAGraphMode.FULL_AND_PIECEWISE: (2, 1)>, 'cudagraph_num_of_warmups': 1, 'cudagraph_capture_sizes': [1, 2, 4, 8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120, 128, 136, 144, 152, 160, 168, 176, 184, 192, 200, 208, 216, 224, 232, 240, 248, 256, 272, 288, 304, 320, 336, 352, 368, 384, 400, 416, 432, 448, 464, 480, 496, 512], 'cudagraph_copy_inputs': False, 'cudagraph_specialize_lora': True, 'use_inductor_graph_partition': False, 'pass_config': {'fuse_norm_quant': False, 'fuse_act_quant': False, 'fuse_attn_quant': False, 'enable_sp': False, 'fuse_gemm_comms': False, 'fuse_allreduce_rms': False}, 'max_cudagraph_capture_size': 512, 'dynamic_shapes_config': {'type': <DynamicShapesType.BACKED: 'backed'>, 'evaluate_guards': False, 'assume_32_bit_indexing': False}, 'local_cache_dir': None, 'fast_moe_cold_start': False, 'static_all_moe_layers': []}
+(EngineCore pid=783523) INFO 04-15 01:46:51 [parallel_state.py:1400] world_size=1 rank=0 local_rank=0 distributed_init_method=tcp://134.199.196.58:55945 backend=nccl
+(EngineCore pid=783523) INFO 04-15 01:46:51 [parallel_state.py:1716] rank 0 in world size 1 is assigned as DP rank 0, PP rank 0, PCP rank 0, TP rank 0, EP rank N/A, EPLB rank N/A
+(EngineCore pid=783523) INFO 04-15 01:46:52 [gpu_model_runner.py:4735] Starting to load model mistralai/Mistral-7B-v0.1...
+(EngineCore pid=783523) INFO 04-15 01:46:52 [rocm.py:546] Using ROCM_ATTN backend out of potential backends: ['ROCM_ATTN', 'TRITON_ATTN'].
+(EngineCore pid=783523) WARNING 04-15 01:46:52 [compilation.py:1220] Op 'sparse_attn_indexer' not present in model, enabling with '+sparse_attn_indexer' has no effect
+(EngineCore pid=783523) Loading safetensors checkpoint shards:   0% Completed | 0/2 [00:00<?, ?it/s]
+Enabling API Tracing
+Results File: "/root/workspace/amd-experiments/results/rocprof_fp16/hip_api_trace_783523.csv"
+(EngineCore pid=783523) Loading safetensors checkpoint shards:  50% Completed | 1/2 [00:01<00:01,  1.61s/it]
+(EngineCore pid=783523) Loading safetensors checkpoint shards: 100% Completed | 2/2 [00:02<00:00,  1.16s/it]
+(EngineCore pid=783523) Loading safetensors checkpoint shards: 100% Completed | 2/2 [00:02<00:00,  1.23s/it]
+(EngineCore pid=783523) 
+(EngineCore pid=783523) INFO 04-15 01:46:55 [default_loader.py:384] Loading weights took 2.53 seconds
+(EngineCore pid=783523) INFO 04-15 01:46:55 [gpu_model_runner.py:4820] Model loading took 13.58 GiB memory and 3.141525 seconds
+(EngineCore pid=783523) INFO 04-15 01:46:57 [backends.py:1051] Using cache directory: /root/.cache/vllm/torch_compile_cache/b80a7617f9/rank_0_0/backbone for vLLM's torch.compile
+(EngineCore pid=783523) INFO 04-15 01:46:57 [backends.py:1111] Dynamo bytecode transform time: 1.80 s
+(EngineCore pid=783523) INFO 04-15 01:46:58 [backends.py:285] Directly load the compiled graph(s) for compile range (1, 16384) from the cache, took 0.866 s
+(EngineCore pid=783523) INFO 04-15 01:46:58 [decorators.py:303] Directly load AOT compilation from path /root/.cache/vllm/torch_compile_cache/torch_aot_compile/e5321c03c5a163c127ec1b460293c278dc05106d8978ea082dc6853aa90d59d7/rank_0_0/model
+(EngineCore pid=783523) INFO 04-15 01:46:58 [monitor.py:48] torch.compile took 3.09 s in total
+Results File: "/root/workspace/amd-experiments/results/rocprof_fp16/hcc_ops_trace_783523.csv"
+(EngineCore pid=783523) INFO 04-15 01:46:59 [monitor.py:76] Initial profiling/warmup run took 0.98 s
+(EngineCore pid=783523) INFO 04-15 01:47:00 [gpu_worker.py:436] Available KV cache memory: 156.85 GiB
+(EngineCore pid=783523) INFO 04-15 01:47:00 [kv_cache_utils.py:1319] GPU KV cache size: 1,284,880 tokens
+(EngineCore pid=783523) INFO 04-15 01:47:00 [kv_cache_utils.py:1324] Maximum concurrency for 4,096 tokens per request: 312.47x
+(EngineCore pid=783523) Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):   0%|          | 0/51 [00:00<?, ?it/s]Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):   4%|▍         | 2/51 [00:00<00:02, 16.38it/s]Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):   8%|▊         | 4/51 [00:00<00:02, 16.87it/s]Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):  12%|█▏        | 6/51 [00:00<00:02, 17.94it/s]Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):  16%|█▌        | 8/51 [00:00<00:02, 18.45it/s]Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):  20%|█▉        | 10/51 [00:00<00:02, 18.64it/s]Results File: "/root/workspace/amd-experiments/results/rocprof_fp16/results_783523.csv"
+Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):  24%|██▎       | 12/51 [00:00<00:02, 18.88it/s]Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):  27%|██▋       | 14/51 [00:00<00:01, 19.01it/s]Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):  31%|███▏      | 16/51 [00:00<00:01, 18.43it/s]Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):  35%|███▌      | 18/51 [00:00<00:01, 18.20it/s]Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):  39%|███▉      | 20/51 [00:01<00:01, 18.63it/s]Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):  43%|████▎     | 22/51 [00:01<00:01, 18.89it/s]Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):  47%|████▋     | 24/51 [00:01<00:01, 19.11it/s]Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):  51%|█████     | 26/51 [00:01<00:01, 19.33it/s]Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):  55%|█████▍    | 28/51 [00:01<00:01, 19.32it/s]Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):  59%|█████▉    | 30/51 [00:01<00:01, 18.86it/s]Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):  63%|██████▎   | 32/51 [00:01<00:01, 18.67it/s]Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):  67%|██████▋   | 34/51 [00:01<00:00, 18.96it/s]Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):  71%|███████   | 36/51 [00:01<00:00, 19.08it/s]Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):  76%|███████▋  | 39/51 [00:02<00:00, 19.45it/s]Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):  80%|████████  | 41/51 [00:02<00:00, 19.43it/s]Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):  84%|████████▍ | 43/51 [00:02<00:00, 18.99it/s]Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):  88%|████████▊ | 45/51 [00:02<00:00, 18.71it/s]Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):  92%|█████████▏| 47/51 [00:02<00:00, 18.85it/s]Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):  96%|█████████▌| 49/51 [00:02<00:00, 18.84it/s]Capturing CUDA graphs (mixed prefill-decode, PIECEWISE): 100%|██████████| 51/51 [00:02<00:00, 18.85it/s]
+(EngineCore pid=783523) Capturing CUDA graphs (decode, FULL):   0%|          | 0/51 [00:00<?, ?it/s]Capturing CUDA graphs (decode, FULL):   2%|▏         | 1/51 [00:00<00:22,  2.25it/s]Capturing CUDA graphs (decode, FULL):   8%|▊         | 4/51 [00:00<00:05,  8.49it/s]Capturing CUDA graphs (decode, FULL):  14%|█▎        | 7/51 [00:00<00:03, 13.01it/s]Capturing CUDA graphs (decode, FULL):  20%|█▉        | 10/51 [00:00<00:02, 16.25it/s]Capturing CUDA graphs (decode, FULL):  25%|██▌       | 13/51 [00:00<00:02, 18.60it/s]Capturing CUDA graphs (decode, FULL):  31%|███▏      | 16/51 [00:01<00:01, 19.55it/s]Capturing CUDA graphs (decode, FULL):  37%|███▋      | 19/51 [00:01<00:01, 20.15it/s]Capturing CUDA graphs (decode, FULL):  43%|████▎     | 22/51 [00:01<00:01, 21.27it/s]Capturing CUDA graphs (decode, FULL):  49%|████▉     | 25/51 [00:01<00:01, 22.17it/s]Capturing CUDA graphs (decode, FULL):  55%|█████▍    | 28/51 [00:01<00:01, 22.77it/s]Capturing CUDA graphs (decode, FULL):  61%|██████    | 31/51 [00:01<00:00, 23.23it/s]Capturing CUDA graphs (decode, FULL):  67%|██████▋   | 34/51 [00:01<00:00, 21.97it/s]Capturing CUDA graphs (decode, FULL):  73%|███████▎  | 37/51 [00:01<00:00, 22.39it/s]Capturing CUDA graphs (decode, FULL):  78%|███████▊  | 40/51 [00:02<00:00, 22.89it/s]Capturing CUDA graphs (decode, FULL):  84%|████████▍ | 43/51 [00:02<00:00, 23.14it/s]Capturing CUDA graphs (decode, FULL):  90%|█████████ | 46/51 [00:02<00:00, 23.61it/s]Capturing CUDA graphs (decode, FULL):  96%|█████████▌| 49/51 [00:02<00:00, 24.04it/s]Capturing CUDA graphs (decode, FULL): 100%|██████████| 51/51 [00:02<00:00, 19.92it/s]
+(EngineCore pid=783523) INFO 04-15 01:47:06 [gpu_model_runner.py:6046] Graph capturing finished in 6 secs, took 3.63 GiB
+(EngineCore pid=783523) INFO 04-15 01:47:06 [core.py:283] init engine (profile, create kv cache, warmup model) took 10.58 seconds
+(EngineCore pid=783523) INFO 04-15 01:47:06 [vllm.py:790] Asynchronous scheduling is enabled.
+Rendering prompts:   0%|          | 0/2 [00:00<?, ?it/s]Rendering prompts: 100%|██████████| 2/2 [00:00<00:00, 194.93it/s]
+Processed prompts:   0%|          | 0/2 [00:00<?, ?it/s, est. speed input: 0.00 toks/s, output: 0.00 toks/s]:0:rocdevice.cpp            :3586: 198693097937 us:  Callback: Queue 0x7b33f0200000 aborting with error : HSA_STATUS_ERROR_INVALID_PACKET_FORMAT: The AQL packet is malformed. code: 0x1009
+(EngineCore pid=783523) ERROR 04-15 01:47:07 [dump_input.py:72] Dumping input data for V1 LLM engine (v0.19.0) with config: model='mistralai/Mistral-7B-v0.1', speculative_config=None, tokenizer='mistralai/Mistral-7B-v0.1', skip_tokenizer_init=False, tokenizer_mode=auto, revision=None, tokenizer_revision=None, trust_remote_code=False, dtype=torch.float16, max_seq_len=4096, download_dir=None, load_format=auto, tensor_parallel_size=1, pipeline_parallel_size=1, data_parallel_size=1, decode_context_parallel_size=1, dcp_comm_backend=ag_rs, disable_custom_all_reduce=False, quantization=None, enforce_eager=False, enable_return_routed_experts=False, kv_cache_dtype=auto, device_config=cuda, structured_outputs_config=StructuredOutputsConfig(backend='auto', disable_any_whitespace=False, disable_additional_properties=False, reasoning_parser='', reasoning_parser_plugin='', enable_in_reasoning=False), observability_config=ObservabilityConfig(show_hidden_metrics_for_version=None, otlp_traces_endpoint=None, collect_detailed_traces=None, kv_cache_metrics=False, kv_cache_metrics_sample=0.01, cudagraph_metrics=False, enable_layerwise_nvtx_tracing=False, enable_mfu_metrics=False, enable_mm_processor_stats=False, enable_logging_iteration_details=False), seed=0, served_model_name=mistralai/Mistral-7B-v0.1, enable_prefix_caching=True, enable_chunked_prefill=True, pooler_config=None, compilation_config={'mode': <CompilationMode.VLLM_COMPILE: 3>, 'debug_dump_path': None, 'cache_dir': '/root/.cache/vllm/torch_compile_cache/b80a7617f9', 'compile_cache_save_format': 'binary', 'backend': 'inductor', 'custom_ops': ['+sparse_attn_indexer', 'none', '+sparse_attn_indexer'], 'splitting_ops': ['vllm::unified_attention', 'vllm::unified_attention_with_output', 'vllm::unified_mla_attention', 'vllm::unified_mla_attention_with_output', 'vllm::mamba_mixer2', 'vllm::mamba_mixer', 'vllm::short_conv', 'vllm::linear_attention', 'vllm::plamo2_mamba_mixer', 'vllm::gdn_attention_core', 'vllm::olmo_hybrid_gdn_full_forward', 'vllm::kda_attention', 'vllm::sparse_attn_indexer', 'vllm::rocm_aiter_sparse_attn_indexer', 'vllm::unified_kv_cache_update', 'vllm::unified_mla_kv_cache_update'], 'compile_mm_encoder': False, 'cudagraph_mm_encoder': False, 'encoder_cudagraph_token_budgets': [], 'encoder_cudagraph_max_images_per_batch': 0, 'compile_sizes': [], 'compile_ranges_endpoints': [16384], 'inductor_compile_config': {'enable_auto_functionalized_v2': False, 'size_asserts': False, 'alignment_asserts': False, 'scalar_asserts': False, 'combo_kernels': True, 'benchmark_combo_kernel': True}, 'inductor_passes': {}, 'cudagraph_mode': <CUDAGraphMode.FULL_AND_PIECEWISE: (2, 1)>, 'cudagraph_num_of_warmups': 1, 'cudagraph_capture_sizes': [1, 2, 4, 8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120, 128, 136, 144, 152, 160, 168, 176, 184, 192, 200, 208, 216, 224, 232, 240, 248, 256, 272, 288, 304, 320, 336, 352, 368, 384, 400, 416, 432, 448, 464, 480, 496, 512], 'cudagraph_copy_inputs': False, 'cudagraph_specialize_lora': True, 'use_inductor_graph_partition': False, 'pass_config': {'fuse_norm_quant': False, 'fuse_act_quant': False, 'fuse_attn_quant': False, 'enable_sp': False, 'fuse_gemm_comms': False, 'fuse_allreduce_rms': False}, 'max_cudagraph_capture_size': 512, 'dynamic_shapes_config': {'type': <DynamicShapesType.BACKED: 'backed'>, 'evaluate_guards': False, 'assume_32_bit_indexing': False}, 'local_cache_dir': '/root/.cache/vllm/torch_compile_cache/b80a7617f9/rank_0_0/backbone', 'fast_moe_cold_start': False, 'static_all_moe_layers': []}, 
+(EngineCore pid=783523) ERROR 04-15 01:47:07 [dump_input.py:79] Dumping scheduler output for model execution: SchedulerOutput(scheduled_new_reqs=[], scheduled_cached_reqs=CachedRequestData(req_ids=['0-87fbb521', '1-84355ed7'],resumed_req_ids=set(),new_token_ids_lens=[],all_token_ids_lens={},new_block_ids=[None, None],num_computed_tokens=[305, 300],num_output_tokens=[35, 34]), num_scheduled_tokens={0-87fbb521: 1, 1-84355ed7: 1}, total_num_scheduled_tokens=2, scheduled_spec_decode_tokens={}, scheduled_encoder_inputs={}, num_common_prefix_blocks=[0], finished_req_ids=[], free_encoder_mm_hashes=[], preempted_req_ids=[], has_structured_output_requests=false, pending_structured_output_tokens=false, num_invalid_spec_tokens=null, kv_connector_metadata=null, ec_connector_metadata=null, new_block_ids_to_zero=null)
+(EngineCore pid=783523) ERROR 04-15 01:47:07 [core.py:1110] EngineCore encountered a fatal error.
+(EngineCore pid=783523) ERROR 04-15 01:47:07 [core.py:1110] Traceback (most recent call last):
+(EngineCore pid=783523) ERROR 04-15 01:47:07 [core.py:1110]   File "/tmp/vllm-src/vllm/v1/engine/core.py", line 1101, in run_engine_core
+(EngineCore pid=783523) ERROR 04-15 01:47:07 [core.py:1110]     engine_core.run_busy_loop()
+(EngineCore pid=783523) ERROR 04-15 01:47:07 [core.py:1110]   File "/tmp/vllm-src/vllm/v1/engine/core.py", line 1142, in run_busy_loop
+(EngineCore pid=783523) ERROR 04-15 01:47:07 [core.py:1110]     self._process_engine_step()
+(EngineCore pid=783523) ERROR 04-15 01:47:07 [core.py:1110]   File "/tmp/vllm-src/vllm/v1/engine/core.py", line 1181, in _process_engine_step
+(EngineCore pid=783523) ERROR 04-15 01:47:07 [core.py:1110]     outputs, model_executed = self.step_fn()
+(EngineCore pid=783523) ERROR 04-15 01:47:07 [core.py:1110]                               ^^^^^^^^^^^^^^
+(EngineCore pid=783523) ERROR 04-15 01:47:07 [core.py:1110]   File "/tmp/vllm-src/vllm/v1/engine/core.py", line 499, in step_with_batch_queue
+(EngineCore pid=783523) ERROR 04-15 01:47:07 [core.py:1110]     model_output = future.result()
+(EngineCore pid=783523) ERROR 04-15 01:47:07 [core.py:1110]                    ^^^^^^^^^^^^^^^
+(EngineCore pid=783523) ERROR 04-15 01:47:07 [core.py:1110]   File "/usr/lib/python3.12/concurrent/futures/_base.py", line 456, in result
+(EngineCore pid=783523) ERROR 04-15 01:47:07 [core.py:1110]     return self.__get_result()
+(EngineCore pid=783523) ERROR 04-15 01:47:07 [core.py:1110]            ^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=783523) ERROR 04-15 01:47:07 [core.py:1110]   File "/usr/lib/python3.12/concurrent/futures/_base.py", line 401, in __get_result
+(EngineCore pid=783523) ERROR 04-15 01:47:07 [core.py:1110]     raise self._exception
+(EngineCore pid=783523) ERROR 04-15 01:47:07 [core.py:1110]   File "/usr/lib/python3.12/concurrent/futures/thread.py", line 58, in run
+(EngineCore pid=783523) ERROR 04-15 01:47:07 [core.py:1110]     result = self.fn(*self.args, **self.kwargs)
+(EngineCore pid=783523) ERROR 04-15 01:47:07 [core.py:1110]              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=783523) ERROR 04-15 01:47:07 [core.py:1110]   File "/tmp/vllm-src/vllm/v1/worker/gpu_model_runner.py", line 263, in get_output
+(EngineCore pid=783523) ERROR 04-15 01:47:07 [core.py:1110]     self.async_copy_ready_event.synchronize()
+(EngineCore pid=783523) ERROR 04-15 01:47:07 [core.py:1110] torch.AcceleratorError: CUDA error: unspecified launch failure
+(EngineCore pid=783523) ERROR 04-15 01:47:07 [core.py:1110] Search for `hipErrorLaunchFailure' in https://rocm.docs.amd.com/projects/HIP/en/latest/index.html for more information.
+(EngineCore pid=783523) ERROR 04-15 01:47:07 [core.py:1110] CUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.
+(EngineCore pid=783523) ERROR 04-15 01:47:07 [core.py:1110] For debugging consider passing AMD_SERIALIZE_KERNEL=3
+(EngineCore pid=783523) ERROR 04-15 01:47:07 [core.py:1110] Device-side assertion tracking was not enabled by user.
+Enabling API Tracing
+Traceback (most recent call last):
+  File "/root/workspace/amd-experiments/benchmarks/bench_vllm_turboquant_ab.py", line 144, in <module>
+(EngineCore pid=783523) Process EngineCore:
+    main()
+  File "/root/workspace/amd-experiments/benchmarks/bench_vllm_turboquant_ab.py", line 121, in main
+    _run_backend(
+  File "/root/workspace/amd-experiments/benchmarks/bench_vllm_turboquant_ab.py", line 56, in _run_backend
+    _ = llm.generate(prompts[:2], sampling)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/vllm-src/vllm/entrypoints/llm.py", line 500, in generate
+    return self._run_completion(
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/vllm-src/vllm/entrypoints/llm.py", line 1859, in _run_completion
+(EngineCore pid=783523) Traceback (most recent call last):
+    return self._run_engine(use_tqdm=use_tqdm, output_type=output_type)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/vllm-src/vllm/entrypoints/llm.py", line 2011, in _run_engine
+(EngineCore pid=783523)   File "/usr/lib/python3.12/multiprocessing/process.py", line 314, in _bootstrap
+(EngineCore pid=783523)     self.run()
+(EngineCore pid=783523)   File "/usr/lib/python3.12/multiprocessing/process.py", line 108, in run
+(EngineCore pid=783523)     self._target(*self._args, **self._kwargs)
+(EngineCore pid=783523)   File "/tmp/vllm-src/vllm/v1/engine/core.py", line 1112, in run_engine_core
+(EngineCore pid=783523)     raise e
+(EngineCore pid=783523)   File "/tmp/vllm-src/vllm/v1/engine/core.py", line 1101, in run_engine_core
+(EngineCore pid=783523)     engine_core.run_busy_loop()
+(EngineCore pid=783523)   File "/tmp/vllm-src/vllm/v1/engine/core.py", line 1142, in run_busy_loop
+(EngineCore pid=783523)     self._process_engine_step()
+(EngineCore pid=783523)   File "/tmp/vllm-src/vllm/v1/engine/core.py", line 1181, in _process_engine_step
+(EngineCore pid=783523)     outputs, model_executed = self.step_fn()
+(EngineCore pid=783523)                               ^^^^^^^^^^^^^^
+(EngineCore pid=783523)   File "/tmp/vllm-src/vllm/v1/engine/core.py", line 499, in step_with_batch_queue
+(EngineCore pid=783523)     model_output = future.result()
+(EngineCore pid=783523)                    ^^^^^^^^^^^^^^^
+(EngineCore pid=783523)   File "/usr/lib/python3.12/concurrent/futures/_base.py", line 456, in result
+(EngineCore pid=783523)     return self.__get_result()
+(EngineCore pid=783523)            ^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=783523)   File "/usr/lib/python3.12/concurrent/futures/_base.py", line 401, in __get_result
+(EngineCore pid=783523)     raise self._exception
+(EngineCore pid=783523)   File "/usr/lib/python3.12/concurrent/futures/thread.py", line 58, in run
+(EngineCore pid=783523)     result = self.fn(*self.args, **self.kwargs)
+(EngineCore pid=783523)              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=783523)   File "/tmp/vllm-src/vllm/v1/worker/gpu_model_runner.py", line 263, in get_output
+(EngineCore pid=783523)     self.async_copy_ready_event.synchronize()
+(EngineCore pid=783523) torch.AcceleratorError: CUDA error: unspecified launch failure
+(EngineCore pid=783523) Search for `hipErrorLaunchFailure' in https://rocm.docs.amd.com/projects/HIP/en/latest/index.html for more information.
+(EngineCore pid=783523) CUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.
+(EngineCore pid=783523) For debugging consider passing AMD_SERIALIZE_KERNEL=3
+(EngineCore pid=783523) Device-side assertion tracking was not enabled by user.
+    step_outputs = self.llm_engine.step()
+                   ^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/vllm-src/vllm/v1/engine/llm_engine.py", line 302, in step
+    outputs = self.engine_core.get_output()
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/vllm-src/vllm/v1/engine/core_client.py", line 780, in get_output
+VGPU(0x4b44c3d0) Queue(0x7b3d3f6af000) is idle
+    raise self._format_exception(outputs) from None
+vllm.v1.engine.exceptions.EngineDeadError: EngineCore encountered an issue. See stack trace (above) for the root cause.
+[rank0]:[W415 01:47:07.105267901 HIPGuardImpl.h:120] Warning: CUDA warning: unspecified launch failure (function destroyEvent)
+terminate called after throwing an instance of 'c10::AcceleratorError'
+  what():  CUDA error: unspecified launch failure
+Search for `hipErrorLaunchFailure' in https://rocm.docs.amd.com/projects/HIP/en/latest/index.html for more information.
+CUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.
+For debugging consider passing AMD_SERIALIZE_KERNEL=3
+Device-side assertion tracking was not enabled by user.
+Exception raised from SetDevice at /pytorch/c10/hip/HIPFunctions.cpp:334 (most recent call first):
+frame #0: c10::Error::Error(c10::SourceLocation, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >) + 0x98 (0x7b3ec955b648 in /root/workspace/amd-experiments/.venv-vllm-rocm/lib/python3.12/site-packages/torch/lib/libc10.so)
+frame #1: <unknown function> + 0x4bf9a (0x7b3ec7addf9a in /root/workspace/amd-experiments/.venv-vllm-rocm/lib/python3.12/site-packages/torch/lib/libc10_hip.so)
+frame #2: c10::cuda::c10_cuda_check_implementation(int, char const*, char const*, unsigned int, bool) + 0x1fd (0x7b3ec7addafd in /root/workspace/amd-experiments/.venv-vllm-rocm/lib/python3.12/site-packages/torch/lib/libc10_hip.so)
+frame #3: c10::cuda::SetDevice(signed char, bool) + 0x9a (0x7b3ec7adebfa in /root/workspace/amd-experiments/.venv-vllm-rocm/lib/python3.12/site-packages/torch/lib/libc10_hip.so)
+frame #4: <unknown function> + 0x29dab (0x7b3ec7abbdab in /root/workspace/amd-experiments/.venv-vllm-rocm/lib/python3.12/site-packages/torch/lib/libc10_hip.so)
+frame #5: <unknown function> + 0x83ab0e (0x7b3ec843ab0e in /root/workspace/amd-experiments/.venv-vllm-rocm/lib/python3.12/site-packages/torch/lib/libtorch_python.so)
+frame #6: _PyObject_ClearManagedDict + 0x17d (0x57b7fd in VLLM::EngineCore)
+frame #7: VLLM::EngineCore() [0x5a17a2]
+frame #8: VLLM::EngineCore() [0x61d10d]
+frame #9: VLLM::EngineCore() [0x61c3d1]
+frame #10: VLLM::EngineCore() [0x5fc093]
+frame #11: _PyEval_EvalFrameDefault + 0xb110 (0x5e1590 in VLLM::EngineCore)
+frame #12: VLLM::EngineCore() [0x549d47]
+frame #13: PyObject_CallMethodObjArgs + 0xe3 (0x54b5c3 in VLLM::EngineCore)
+frame #14: PyImport_ImportModuleLevelObject + 0x395 (0x5fd805 in VLLM::EngineCore)
+frame #15: _PyEval_EvalFrameDefault + 0x5eee (0x5dc36e in VLLM::EngineCore)
+frame #16: VLLM::EngineCore() [0x6e1ad3]
+frame #17: Py_FinalizeEx + 0x4e (0x6b0dbe in VLLM::EngineCore)
+frame #18: Py_Exit + 0x11 (0x6b1c11 in VLLM::EngineCore)
+frame #19: VLLM::EngineCore() [0x6b505d]
+frame #20: VLLM::EngineCore() [0x6b4ecc]
+frame #21: PyRun_SimpleStringFlags + 0x6a (0x6b3d3a in VLLM::EngineCore)
+frame #22: Py_RunMain + 0x481 (0x6bc9d1 in VLLM::EngineCore)
+frame #23: Py_BytesMain + 0x2d (0x6bc3ed in VLLM::EngineCore)
+frame #24: <unknown function> + 0x2a1ca (0x7b3ed462a1ca in /lib/x86_64-linux-gnu/libc.so.6)
+frame #25: __libc_start_main + 0x8b (0x7b3ed462a28b in /lib/x86_64-linux-gnu/libc.so.6)
+frame #26: _start + 0x25 (0x6576c5 in VLLM::EngineCore)
+
+Processed prompts:   0%|          | 0/2 [00:00<?, ?it/s, est. speed input: 0.00 toks/s, output: 0.00 toks/s]
+Results File: "/root/workspace/amd-experiments/results/rocprof_fp16/hip_api_trace_783432.csv"
+Traceback (most recent call last):
+  File "/root/workspace/amd-experiments/benchmarks/bench_vllm_rocprof_timeline.py", line 149, in <module>
+    main()
+  File "/root/workspace/amd-experiments/benchmarks/bench_vllm_rocprof_timeline.py", line 142, in main
+    all_results = [_run_mode(args, m) for m in modes]
+                   ^^^^^^^^^^^^^^^^^^
+  File "/root/workspace/amd-experiments/benchmarks/bench_vllm_rocprof_timeline.py", line 118, in _run_mode
+    subprocess.run(cmd, check=True, cwd=str(workspace_root))
+  File "/usr/lib/python3.12/subprocess.py", line 571, in run
+    raise CalledProcessError(retcode, process.args,
+subprocess.CalledProcessError: Command '['rocprofv2', '--hip-trace', '--kernel-trace', '-d', '/root/workspace/amd-experiments/results/rocprof_fp16', '/root/workspace/amd-experiments/.venv-vllm-rocm/bin/python', '/root/workspace/amd-experiments/benchmarks/bench_vllm_turboquant_ab.py', '--only-backend', 'fp16', '--model', 'mistralai/Mistral-7B-v0.1', '--input-len', '256', '--output-len', '64', '--num-prompts', '8', '--output', '/root/workspace/amd-experiments/results/bench_vllm_turboquant_ab_fp16.json']' returned non-zero exit status 1.

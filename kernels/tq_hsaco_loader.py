@@ -61,8 +61,9 @@ import torch
 # ──────────────────────────────────────────────────────────────────────────────
 
 _THIS_DIR    = Path(__file__).parent
-_HSACO_PATH  = _THIS_DIR / "turboquant_kernels.hsaco"
-_FATBIN_PATH = _THIS_DIR / "turboquant_mi300x.hip.cpp-hip-amdgcn-amd-amdhsa.hipfb"
+_HIP_DIR     = _THIS_DIR / "hip"
+_HSACO_PATH  = _HIP_DIR / "turboquant_kernels.hsaco"
+_FATBIN_PATH = _HIP_DIR / "turboquant_mi300x.hip.cpp-hip-amdgcn-amd-amdhsa.hipfb"
 
 # PyTorch's bundled libamdhip64.so (ROCm 6.2 — matches the process ABI)
 def _find_torch_libamdhip() -> Path:

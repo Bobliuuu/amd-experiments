@@ -37,6 +37,14 @@ sys.path.insert(0, str(KERNELS_DIR))
 import torch
 import torch.nn.functional as F
 
+try:
+    from turboquant_mi300x import TurboQuantMI300X
+    from tq_triton import compress_kv_for_triton, turboquant_attention_fwd
+except Exception:
+    TurboQuantMI300X = None
+    compress_kv_for_triton = None
+    turboquant_attention_fwd = None
+
 # MI300X peak HBM3 bandwidth (GB/s)
 MI300X_PEAK_GBS = 5300.0
 
@@ -392,6 +400,75 @@ def benchmark_causal_vs_noncausal(
     return results
 
 
+def benchmark_fp16_nonfused_fused(
+    seq_lens: list[int] | None = None,
+    warmup: int = 5,
+    reps: int = 50,
+) -> list[dict]:
+    """
+    Compare three decode-step paths on identical shapes:
+      1) FP16 SDPA
+      2) Non-fused compressed (TQ compress/decompress + SDPA)
+      3) Fused compressed (Triton fused dequant+attention)
+    """
+    if seq_lens is None:
+        seq_lens = [1024, 4096, 16384, 32768, 65536]
+    if TurboQuantMI300X is None or compress_kv_for_triton is None or turboquant_attention_fwd is None:
+        return []
+
+    B, H, D, S_q = 1, 32, 128, 1
+    sm_scale = D ** -0.5
+    tq = TurboQuantMI300X(bits=3, rotation_seed=42)
+
+    print("FP16 vs non-fused compressed vs fused compressed")
+    print("=" * 100)
+    print(f"{'seq_len':>8}  {'fp16_ms':>10}  {'nonfused_ms':>12}  {'fused_ms':>10}  {'fused_vs_non':>12}")
+    print("-" * 100)
+    rows = []
+    for seq_len in seq_lens:
+        torch.manual_seed(123)
+        q = torch.randn(B, H, S_q, D, device="cuda", dtype=torch.float16)
+        k = torch.randn(B, H, seq_len, D, device="cuda", dtype=torch.float16)
+        v = torch.randn(B, H, seq_len, D, device="cuda", dtype=torch.float16)
+        q_rot = tq.rotate_queries(q.float()).to(torch.float16)
+        k_planes, k_norms, v_planes, v_norms = compress_kv_for_triton(k, v, tq)
+        k_comp = tq.compress_tensor(k.float().reshape(-1, D))
+        v_comp = tq.compress_tensor(v.float().reshape(-1, D))
+
+        ms_fp16 = bench(lambda: F.scaled_dot_product_attention(q, k, v, is_causal=False, scale=sm_scale), warmup=warmup, reps=reps)
+        ms_non = bench(
+            lambda: F.scaled_dot_product_attention(
+                q,
+                tq.decompress_tensor(k_comp, (B, H, seq_len, D)).to(torch.float16),
+                tq.decompress_tensor(v_comp, (B, H, seq_len, D)).to(torch.float16),
+                is_causal=False,
+                scale=sm_scale,
+            ),
+            warmup=warmup,
+            reps=reps,
+        )
+        ms_fused = bench(
+            lambda: turboquant_attention_fwd(
+                q_rot, k_planes, k_norms, v_planes, v_norms,
+                rotation=tq.rotation, sm_scale=sm_scale,
+            ),
+            warmup=warmup,
+            reps=reps,
+        )
+        fused_vs_non = ms_non / ms_fused if ms_fused > 0 else float("nan")
+        print(f"{seq_len:>8}  {ms_fp16:>10.3f}  {ms_non:>12.3f}  {ms_fused:>10.3f}  {fused_vs_non:>12.2f}x")
+        rows.append({
+            "seq_len": seq_len,
+            "fp16_ms": round(ms_fp16, 4),
+            "nonfused_compressed_ms": round(ms_non, 4),
+            "fused_compressed_ms": round(ms_fused, 4),
+            "fused_speedup_vs_nonfused": round(fused_vs_non, 3),
+        })
+    print("-" * 100)
+    print()
+    return rows
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # 4. Main
 # ──────────────────────────────────────────────────────────────────────────────
@@ -421,6 +498,14 @@ def main() -> None:
         metavar="N",
         help="Context lengths for causal vs non-causal comparison.",
     )
+    parser.add_argument(
+        "--matrix-seq-lens",
+        nargs="+",
+        type=int,
+        default=[1024, 4096, 16384, 32768, 65536],
+        metavar="N",
+        help="Context lengths for FP16/non-fused/fused comparison matrix.",
+    )
     args = parser.parse_args()
 
     if not torch.cuda.is_available():
@@ -442,6 +527,7 @@ def main() -> None:
 
     # ── Causal vs non-causal ──────────────────────────────────────────────────
     causal_results = benchmark_causal_vs_noncausal(seq_lens=args.causal_seq_lens)
+    matrix_results = benchmark_fp16_nonfused_fused(seq_lens=args.matrix_seq_lens)
 
     # ── Save results ──────────────────────────────────────────────────────────
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -454,6 +540,7 @@ def main() -> None:
         "dispatch_check":      dispatch_findings,
         "sdpa_vs_bmm":         bw_results,
         "causal_vs_noncausal": causal_results,
+        "fp16_nonfused_fused_matrix": matrix_results,
     }
 
     out_path.write_text(json.dumps(output, indent=2))

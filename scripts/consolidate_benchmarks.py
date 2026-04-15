@@ -92,6 +92,8 @@ def main() -> None:
     roc = take("rocprof_kernel_timeline.json")
     mfma = take("bench_mfma_rotate.json")
     pope = take("pope_rotorquant_2026_claims.json")
+    runtime_ratio = take("bench_runtime_ratio_all_methods.json")
+    empirical_merged = take("bench_empirical_kv_validation.json")
 
     merged["summary"] = {}
     if isinstance(comp, list):
@@ -104,6 +106,10 @@ def main() -> None:
         merged["summary"]["mfma_rotate"] = mfma
     if isinstance(pope, dict):
         merged["summary"]["pope_author_claims"] = pope
+    if isinstance(runtime_ratio, dict):
+        merged["summary"]["runtime_ratio_all_methods"] = runtime_ratio
+    if isinstance(empirical_merged, dict):
+        merged["summary"]["empirical_kv_validation"] = empirical_merged
 
     out_lines: list[str] = []
     if args.markdown:
@@ -137,6 +143,26 @@ def main() -> None:
 
     out_lines.append(section("Author headline JSON (optional)"))
     out_lines.append(fmt_json(pope, limit=4000) if pope else "(missing pope_rotorquant_2026_claims.json)\n")
+
+    out_lines.append(section("Runtime ratio benchmark (calculated vs measured)"))
+    if isinstance(runtime_ratio, dict):
+        for r in runtime_ratio.get("results", []):
+            out_lines.append(
+                f"  {r.get('method','?')}{r.get('bits','')}  "
+                f"calc={r.get('ratio_calculated_layout', 0):.3f}x  "
+                f"obs={r.get('ratio_observed_runtime', 0):.3f}x  "
+                f"fp16={r.get('kv_bytes_fp16', 0)/1e6:.2f}MB  "
+                f"comp={r.get('kv_bytes_compressed_materialized', 0)/1e6:.2f}MB\n"
+            )
+    else:
+        out_lines.append("(missing bench_runtime_ratio_all_methods.json)\n")
+
+    out_lines.append(section("Merged empirical validation artifact"))
+    out_lines.append(
+        fmt_json(empirical_merged, limit=8000)
+        if empirical_merged
+        else "(missing bench_empirical_kv_validation.json)\n"
+    )
 
     text = "".join(out_lines)
     if args.verbose:

@@ -163,9 +163,9 @@ def bench_python_wrapper(n_vectors: int, n_iters: int = 100, n_warmup: int = 20)
 
 def bench_standalone_binary(n_vectors: int, n_iters: int = 50):
     """Run tq_bench_mi300x binary and parse output."""
-    binary = KERNELS_DIR / "tq_bench_mi300x"
+    binary = KERNELS_DIR / "hip" / "tq_bench_mi300x"
     if not binary.exists():
-        return {"error": f"{binary} not found. Run: cd kernels && bash build_mi300x.sh bench"}
+        return {"error": f"{binary} not found. Run: cd kernels/hip && bash build_mi300x.sh bench"}
 
     try:
         result = subprocess.run(

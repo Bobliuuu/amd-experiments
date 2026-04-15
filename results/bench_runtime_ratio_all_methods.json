@@ -1,0 +1,65 @@
+{
+  "model": "mistralai/Mistral-7B-v0.1",
+  "device": "AMD Instinct MI300X VF",
+  "seq_len": 2048,
+  "batch_size": 1,
+  "bits": 3,
+  "results": [
+    {
+      "method": "turbo",
+      "bits": 3,
+      "seq_len": 2048,
+      "batch_size": 1,
+      "cache_layers": 32,
+      "cache_kv_heads": 8,
+      "cache_head_dim": 128,
+      "kv_bytes_fp16": 268435456,
+      "kv_bytes_compressed_materialized": 54525952,
+      "ratio_calculated_layout": 4.923077,
+      "ratio_observed_runtime": 4.923077,
+      "fp16_bytes_per_vector": 256
+    },
+    {
+      "method": "planar",
+      "bits": 3,
+      "seq_len": 2048,
+      "batch_size": 1,
+      "cache_layers": 32,
+      "cache_kv_heads": 8,
+      "cache_head_dim": 128,
+      "kv_bytes_fp16": 268435456,
+      "kv_bytes_compressed_materialized": 138412032,
+      "ratio_calculated_layout": 4.923077,
+      "ratio_observed_runtime": 1.939394,
+      "fp16_bytes_per_vector": 256
+    },
+    {
+      "method": "iso",
+      "bits": 3,
+      "seq_len": 2048,
+      "batch_size": 1,
+      "cache_layers": 32,
+      "cache_kv_heads": 8,
+      "cache_head_dim": 128,
+      "kv_bytes_fp16": 268435456,
+      "kv_bytes_compressed_materialized": 138412032,
+      "ratio_calculated_layout": 4.923077,
+      "ratio_observed_runtime": 1.939394,
+      "fp16_bytes_per_vector": 256
+    },
+    {
+      "method": "rotor",
+      "bits": 3,
+      "seq_len": 2048,
+      "batch_size": 1,
+      "cache_layers": 32,
+      "cache_kv_heads": 8,
+      "cache_head_dim": 128,
+      "kv_bytes_fp16": 268435456,
+      "kv_bytes_compressed_materialized": 139460608,
+      "ratio_calculated_layout": 4.923077,
+      "ratio_observed_runtime": 1.924812,
+      "fp16_bytes_per_vector": 256
+    }
+  ]
+}

@@ -604,6 +604,23 @@ body {
 
 /* ─── MATH SECTION ───────────────────────────────────────────────── */
 
+/* KaTeX display override — inherit font size from parent */
+.katex { font-size: 1em !important; }
+.katex-display { margin: 0 !important; }
+.katex-display > .katex { text-align: left !important; }
+
+.math-detail-card {
+  overflow: visible;
+}
+
+.math-detail-body {
+  grid-template-columns: auto 1fr;
+}
+
+.quant-inner-grid {
+  grid-template-columns: 1fr auto;
+}
+
 .math-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1149,6 +1166,21 @@ body {
   gap: 1rem;
 }
 
+.figure-row {
+  transition: transform 0.22s ease, box-shadow 0.22s ease;
+}
+
+.figure-row:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 28px 60px rgba(0,0,0,0.5), 0 0 30px rgba(229,52,75,0.07);
+}
+
+@media (max-width: 700px) {
+  .figure-row {
+    grid-template-columns: 1fr !important;
+  }
+}
+
 .figure-card {
   border-radius: var(--radius-md);
   padding: 0.85rem;
@@ -1228,6 +1260,8 @@ body {
   .problem-cards { grid-template-columns: 1fr 1fr; }
   .method-intro-grid { grid-template-columns: 1fr 1fr; }
   .math-grid { grid-template-columns: 1fr; }
+  .math-detail-body { grid-template-columns: 1fr !important; }
+  .quant-inner-grid { grid-template-columns: 1fr !important; }
   .conclusion-grid { grid-template-columns: 1fr; }
   .reasoning-grid { grid-template-columns: 1fr; }
   .verdict-grid { grid-template-columns: 1fr 1fr; }

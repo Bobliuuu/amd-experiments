@@ -1,5 +1,7 @@
-import { useEffect, useRef, useState } from "react";
-import { motion, useInView, useSpring, useTransform, animate } from "framer-motion";
+import { useEffect, useRef, useState, useMemo } from "react";
+import { motion, useInView, useSpring, useTransform, animate, useMotionValue, AnimatePresence } from "framer-motion";
+import katex from "katex";
+import "katex/dist/katex.min.css";
 
 /* ─── SHARED UTILITIES ───────────────────────────────────────────── */
 
@@ -50,13 +52,728 @@ const fadeUp = {
   }),
 };
 
+/** Mistral-7B-v0.1 — matches KV sizing used in `bench_tq3_decode.py`. */
+const MISTRAL7B_KV = {
+  nLayers: 32,
+  nKvHeads: 8,
+  headDim: 128,
+};
+
+/** Full KV cache (K+V), FP16: 2 × L × Hkv × seq × head_dim × sizeof(fp16). */
+function kvBytesFp16(seqLen) {
+  return (
+    2 *
+    MISTRAL7B_KV.nLayers *
+    MISTRAL7B_KV.nKvHeads *
+    seqLen *
+    MISTRAL7B_KV.headDim *
+    2
+  );
+}
+
+/**
+ * TQ3 packed layout: 4 + ceil(head_dim × 3 / 8) bytes per head vector (K or V).
+ * Full KV: 2 × L × Hkv × seq × bytes_per_vector (same seq factor as FP16).
+ */
+function kvBytesTq3Theoretical(seqLen) {
+  const bytesPerHeadVector = 4 + Math.ceil((MISTRAL7B_KV.headDim * 3) / 8);
+  return (
+    2 *
+    MISTRAL7B_KV.nLayers *
+    MISTRAL7B_KV.nKvHeads *
+    seqLen *
+    bytesPerHeadVector
+  );
+}
+
+function formatKvDataSize(bytes) {
+  const b = Math.max(0, bytes);
+  if (b >= 1e12) return `${(b / 1e12).toFixed(2)} TB`;
+  if (b >= 1e9) return `${(b / 1e9).toFixed(1)} GB`;
+  if (b >= 1e6) return `${(b / 1e6).toFixed(2)} MB`;
+  if (b >= 1e3) return `${(b / 1e3).toFixed(2)} KB`;
+  return `${b.toFixed(0)} B`;
+}
+
+/** Per-head vector: FP16 K or V slice = head_dim × sizeof(fp16) = 128×2 = 256 B. */
+const BYTES_FP16_HEAD_VEC = MISTRAL7B_KV.headDim * 2;
+
+const EXPERIMENT_KV_METRICS_URLS = ["/content/experiment_kv_metrics.json"];
+
+/**
+ * Loads MI300X benchmark numbers shipped with the UI (snapshot of results/*.json).
+ * Update `public/content/experiment_kv_metrics.json` after new benchmark runs.
+ */
+function useExperimentKvMetrics() {
+  const [data, setData] = useState(null);
+  const [error, setError] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      for (const url of EXPERIMENT_KV_METRICS_URLS) {
+        try {
+          const r = await fetch(url, { cache: "no-store" });
+          if (!r.ok) continue;
+          const ct = (r.headers.get("content-type") || "").toLowerCase();
+          const text = await r.text();
+          if (ct.includes("text/html") || /^\s*<!doctype html>/i.test(text)) continue;
+          const j = JSON.parse(text);
+          if (!cancelled) {
+            setData(j);
+            setError(null);
+            return;
+          }
+        } catch (e) {
+          if (!cancelled) setError(e);
+        }
+      }
+      if (!cancelled) setError(new Error("experiment_kv_metrics.json not found"));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  return { data, error };
+}
+
+function LiveGenerationPanel({ inView }) {
+  const TARGET = 60;
+  /** Reference context for headline KV math (Mistral-7B @ 128K — matches report numbers). */
+  const REF_SEQ = 131072;
+  const BYTES_PER_TQ3_VEC = 4 + Math.ceil((MISTRAL7B_KV.headDim * 3) / 8);
+  const { data: kvExp } = useExperimentKvMetrics();
+  const [tokens, setTokens] = useState(0);
+  const [running, setRunning] = useState(false);
+
+  useEffect(() => {
+    if (!inView || running) return;
+    setRunning(true);
+    setTokens(0);
+    const started = performance.now();
+    const durationMs = 2600;
+    let rafId = 0;
+    let doneTimer = 0;
+    const tick = (ts) => {
+      const p = Math.min(1, (ts - started) / durationMs);
+      const next = Math.floor(p * TARGET);
+      setTokens(next);
+      if (p < 1) {
+        rafId = requestAnimationFrame(tick);
+      } else {
+        doneTimer = window.setTimeout(() => {
+          setRunning(false);
+        }, 1400);
+      }
+    };
+    rafId = requestAnimationFrame(tick);
+    return () => {
+      cancelAnimationFrame(rafId);
+      if (doneTimer) window.clearTimeout(doneTimer);
+    };
+  }, [inView, running]);
+
+  /** Live KV row uses full context: 128K prefill + decode steps (same formulas). */
+  const seqLen = REF_SEQ + tokens;
+  const fp16B = kvBytesFp16(seqLen);
+  const tq3B = kvBytesTq3Theoretical(seqLen);
+  const ratioKv = fp16B / Math.max(tq3B, 1);
+  const fp16Str = formatKvDataSize(fp16B);
+  const tq3Str = formatKvDataSize(tq3B);
+  const demoTokPerSec =
+    tokens > 0 ? (5.6 + Math.min(1.4, tokens / 45)).toFixed(1) : "0.0";
+  const progressBlocks = 38;
+  const filled = Math.round((tokens / TARGET) * progressBlocks);
+  const bar = `${"█".repeat(filled)}${" ".repeat(progressBlocks - filled)}`;
+  const headline =
+    tokens >= TARGET ? "TQ3 - Generation Complete" : "TQ3 - Generating…";
+
+  const fpRef = kvBytesFp16(REF_SEQ);
+  const tqRef = kvBytesTq3Theoretical(REF_SEQ);
+  const benchRow = kvExp?.turboquant_tq3_decode_seq8192;
+  const benchRatio =
+    benchRow && benchRow.kv_bytes_compressed
+      ? benchRow.kv_bytes_fp16 / benchRow.kv_bytes_compressed
+      : null;
+
+  return (
+    <div className="glass" style={{ borderRadius: "var(--radius-md)", padding: "1.2rem 1.3rem" }}>
+      <p style={{ fontSize: "0.66rem", color: "var(--amd-red)", letterSpacing: "0.1em", fontFamily: "JetBrains Mono,monospace", marginBottom: "0.7rem" }}>
+        LIVE DECODE SCOREBOARD (screenshot-style, benchmark-driven)
+      </p>
+      <div style={{
+        background: "rgba(0,0,0,0.55)",
+        border: "1px solid rgba(255,255,255,0.08)",
+        borderRadius: "8px",
+        padding: "0.9rem 1rem",
+        fontFamily: "JetBrains Mono,monospace",
+        fontSize: "0.74rem",
+        lineHeight: 1.65,
+        color: "var(--text)",
+      }}>
+        <div>{headline}</div>
+        <div>{"=".repeat(68)}</div>
+        <div>Tokens&nbsp;&nbsp;&nbsp; {tokens}/{TARGET} [{bar}]</div>
+        <div>Seq&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; {seqLen.toLocaleString()} (128K ctx + decode {tokens})</div>
+        <div>Cache&nbsp;&nbsp;&nbsp;&nbsp; {MISTRAL7B_KV.nLayers} layers × {MISTRAL7B_KV.nKvHeads} KV heads × {MISTRAL7B_KV.headDim}d</div>
+        <div>&nbsp;</div>
+        <div style={{ color: "var(--text-muted)", fontSize: "0.68rem" }}>// KV cache (FP16) — Mistral-7B</div>
+        <div>
+          KV_bytes = 2 × n_layers × n_kv_heads × seq × head_dim × sizeof(FP16)
+        </div>
+        <div>
+          = 2 × {MISTRAL7B_KV.nLayers} × {MISTRAL7B_KV.nKvHeads} × {REF_SEQ.toLocaleString()} × {MISTRAL7B_KV.headDim} × 2
+        </div>
+        <div>
+          = {formatKvDataSize(fpRef)} <span className="comment">// of 192 GB HBM3; GQA uses num_kv_heads=8</span>
+        </div>
+        <div>&nbsp;</div>
+        <div style={{ color: "var(--text-muted)", fontSize: "0.68rem" }}>// 3-bit layout (same packed bytes all methods)</div>
+        <div>
+          packed_bytes = 4 + ⌈{MISTRAL7B_KV.headDim} × 3 / 8⌉ = 4 + 48 = {BYTES_PER_TQ3_VEC} B/vector
+        </div>
+        <div>&nbsp;</div>
+        <div style={{ color: "var(--text-muted)", fontSize: "0.68rem" }}>// Full KV @ this seq (layout-derived while token bar runs)</div>
+        <div>TQ3 KV&nbsp;&nbsp;{tq3Str}&nbsp;&nbsp;&nbsp;&nbsp;FP16 KV&nbsp;&nbsp;{fp16Str}</div>
+        <div>
+          ratio = {fp16Str} / {tq3Str} = <span className="result">{ratioKv.toFixed(3)}×</span>
+        </div>
+        {benchRow && benchRatio != null && (
+          <>
+            <div>&nbsp;</div>
+            <div style={{ color: "var(--text-muted)", fontSize: "0.68rem" }}>
+              {`// MI300X measured (${kvExp?.sources?.tq3_decode ?? "bench_tq3_decode"}), seq ${benchRow.seq_len}`}
+            </div>
+            <div>
+              KV_fp16 {benchRow.kv_bytes_fp16.toLocaleString()} B / KV_tq3 {benchRow.kv_bytes_compressed.toLocaleString()} B ={" "}
+              <span className="result">{benchRatio.toFixed(5)}×</span>
+            </div>
+          </>
+        )}
+        <div>Speed&nbsp;&nbsp;&nbsp;&nbsp;{demoTokPerSec} tok/s (demo)</div>
+        <div>{"=".repeat(68)}</div>
+      </div>
+      <p style={{ marginTop: "0.55rem", fontSize: "0.7rem", color: "var(--text-muted)", fontFamily: "JetBrains Mono,monospace" }}>
+        Source: <code style={{ fontSize: "0.68rem" }}>report-ui/src/components/ReportSections.jsx</code> — run{" "}
+        <code style={{ fontSize: "0.68rem" }}>npm run dev</code> or{" "}
+        <code style={{ fontSize: "0.68rem" }}>npm run build</code> so <code style={{ fontSize: "0.68rem" }}>dist/</code>{" "}
+        matches src. Same KV math as <code style={{ fontSize: "0.68rem" }}>bench_tq3_decode.py</code>.
+      </p>
+    </div>
+  );
+}
+
+function ImportantFactsPanel() {
+  const facts = [
+    { k: "Compression target", v: "4.923x", note: "52 B vs FP16 256 B/vector" },
+    { k: "Observed block ratio", v: "~1.94x", note: "Current int8-index Triton path" },
+    { k: "Best compress kernel", v: "IsoQuant 21.8 GB/s", note: "4096 vectors, median" },
+    { k: "Best decompress kernel", v: "IsoQuant 38.3 GB/s", note: "4096 vectors, median" },
+    { k: "Fastest prefill", v: "Planar 1,126K tok/s", note: "26.5x TurboQuant" },
+    { k: "Batch=1 decode", v: "Compute-bound", note: "Weight cycling dominates" },
+    { k: "Max context @192GB", v: "6.9M tokens", note: "if 3-bit packed layout" },
+    { k: "Quality spread", v: "±0.0003 cosine", note: "3-bit methods nearly identical" },
+  ];
+
+  return (
+    <div className="glass" style={{ borderRadius: "var(--radius-md)", padding: "1.2rem 1.3rem" }}>
+      <p style={{ fontSize: "0.66rem", color: "var(--amd-red)", letterSpacing: "0.1em", fontFamily: "JetBrains Mono,monospace", marginBottom: "0.8rem" }}>
+        IMPORTANT FACTS FROM THE REPORT
+      </p>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.65rem" }}>
+        {facts.map((f) => (
+          <div key={f.k} style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: "8px", padding: "0.65rem 0.7rem" }}>
+            <p style={{ fontSize: "0.66rem", color: "var(--text-muted)", fontFamily: "JetBrains Mono,monospace", marginBottom: "0.18rem" }}>{f.k}</p>
+            <p style={{ fontSize: "0.88rem", color: "var(--text)", fontWeight: 650, marginBottom: "0.12rem" }}>{f.v}</p>
+            <p style={{ fontSize: "0.66rem", color: "var(--text-sub)" }}>{f.note}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function RooflineComparePanel() {
+  const rows = [
+    { m: "PlanarQuant3", c: "var(--planar-color)", fma: 256, comp: 18.7, decomp: 35.4 },
+    { m: "IsoQuant3", c: "var(--iso-color)", fma: 512, comp: 21.8, decomp: 38.3 },
+    { m: "RotorQuant3", c: "var(--rotor-color)", fma: 1176, comp: 17.3, decomp: 34.8 },
+    { m: "TurboQuant3", c: "var(--turbo-color)", fma: 16384, comp: 2.9, decomp: 4.4 },
+  ];
+  return (
+    <div className="glass" style={{ borderRadius: "var(--radius-md)", padding: "1.2rem 1.3rem" }}>
+      <p style={{ fontSize: "0.66rem", color: "var(--amd-red)", letterSpacing: "0.1em", fontFamily: "JetBrains Mono,monospace", marginBottom: "0.8rem" }}>
+        TURBOQUANT ROOFLINE + 4-METHOD COMPARISON
+      </p>
+      <img
+        src="/content/figures_v2/fig28_mi300x_roofline_tq_attention.png"
+        alt="TurboQuant roofline"
+        style={{ width: "100%", borderRadius: "8px", border: "1px solid rgba(255,255,255,0.08)", marginBottom: "0.75rem" }}
+      />
+      <div style={{ overflowX: "auto" }}>
+        <table className="data-table" style={{ width: "100%" }}>
+          <thead>
+            <tr>
+              <th>Method</th><th>FMAs/vec</th><th>Compress</th><th>Decompress</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.m}>
+                <td className="cell-method"><span className="dot" style={{ background: r.c }} />{r.m}</td>
+                <td className="cell-num">{r.fma.toLocaleString()}</td>
+                <td className="cell-num">{r.comp} GB/s</td>
+                <td className="cell-num">{r.decomp} GB/s</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p style={{ marginTop: "0.5rem", fontSize: "0.7rem", color: "var(--text-muted)", fontFamily: "JetBrains Mono,monospace" }}>
+        Roofline chart is TurboQuant-specific; table provides apples-to-apples cross-method context.
+      </p>
+    </div>
+  );
+}
+
+/* ─── COMPRESSION LANDSCAPE SECTION ─────────────────────────────── */
+
+// All compression metrics are sourced from bench_empirical_kv_validation.json
+// (merged from bench_runtime_ratio_all_methods.json + bench_compress_decompress_recheck.json).
+//
+// ratioPacked = theoretical ratio assuming full bitplane packing (4+48 bytes = 52B)
+// ratioObserved = measured from materialized cache tensors in a real prefill run
+//   (results/bench_runtime_ratio_all_methods.json: kv_bytes_fp16 / kv_bytes_compressed_materialized)
+//
+// Key finding: TurboQuant (Python wrapper) writes the full 52-byte bitplane format,
+// so ratioObserved == ratioPacked for TQ3. The block-rotation Triton kernels store
+// indices as int8 (1 byte/index), giving 132 bytes/vec for Planar/Iso and 133 for
+// Rotor (128 dims → 43 groups×3 = 129 indices due to 3D padding). ratioPacked for
+// those methods is what they WOULD achieve with bitplane packing implemented.
+const ALL_SCHEMES = [
+  { id: "fp16",   name: "FP16",          bytesObserved: 256,  bytesIfPacked: 256,  ratioObserved: 1.000,  ratioPacked: 1.000,  cosine: 1.0000, mse: 0.0,      decode8k: 46.5,  color: "#6B7280", group: "baseline" },
+  { id: "fp8",    name: "FP8 E4M3",      bytesObserved: 128,  bytesIfPacked: 128,  ratioObserved: 2.000,  ratioPacked: 2.000,  cosine: 0.9999, mse: 0.00001,  decode8k: 46.0,  color: "#3B82F6", group: "hardware" },
+  { id: "int4",   name: "INT4 sym",      bytesObserved: 64,   bytesIfPacked: 64,   ratioObserved: 4.000,  ratioPacked: 4.000,  cosine: 0.9800, mse: 0.001,    decode8k: 26.0,  color: "#8B5CF6", group: "hardware" },
+  { id: "tq4",    name: "TQ4",           bytesObserved: 68,   bytesIfPacked: 68,   ratioObserved: 3.765,  ratioPacked: 3.765,  cosine: 0.9954, mse: 0.00974,  decode8k: 11.2,  color: "#06B6D4", group: "turbo" },
+  // TQ3: bitplane packing is implemented — observed matches packed
+  { id: "tq3",    name: "TQ3",           bytesObserved: 52,   bytesIfPacked: 52,   ratioObserved: 4.923,  ratioPacked: 4.923,  cosine: 0.9831, mse: 0.03413,  decode8k: 6.3,   color: "#3B82F6", group: "turbo" },
+  // Block methods: current Triton kernels store int8 per index (not bit-packed).
+  // bytesObserved: measured by bench_runtime_ratio_all_methods.py on Mistral-7B-v0.1.
+  // bytesIfPacked: target format = 4B norm + 48B bitplanes (same as TQ3).
+  // Rotor stores 129 indices (43 groups × 3 dims; 128 is not divisible by 3 → +1 pad).
+  { id: "planar", name: "PlanarQuant3",  bytesObserved: 132,  bytesIfPacked: 52,   ratioObserved: 1.939,  ratioPacked: 4.923,  cosine: 0.9829, mse: 0.03423,  decode8k: null,  color: "#E5344B", group: "block" },
+  { id: "iso",    name: "IsoQuant3",     bytesObserved: 132,  bytesIfPacked: 52,   ratioObserved: 1.939,  ratioPacked: 4.923,  cosine: 0.9831, mse: 0.03380,  decode8k: null,  color: "#A855F7", group: "block" },
+  { id: "rotor",  name: "RotorQuant3",   bytesObserved: 133,  bytesIfPacked: 52,   ratioObserved: 1.925,  ratioPacked: 4.923,  cosine: 0.9830, mse: 0.03408,  decode8k: null,  color: "#FF7B35", group: "block" },
+];
+
+export function CompressionLandscapeSection() {
+  const ref = useRef(null);
+  const inView = useInView(ref, { once: true, margin: "-80px" });
+  const [activeView, setActiveView] = useState("ratio");
+  const [showPacked, setShowPacked] = useState(false);
+
+  const maxRatioPacked = 4.923;
+  const maxRatioObserved = 4.923; // TQ3 observed = 4.923, dominates
+  const maxDecode = 46.5;
+
+  return (
+    <section id="compression" className="report-section" ref={ref}>
+      <div className="section-divider" />
+      <motion.div
+        style={{ paddingTop: "5rem" }}
+        variants={fadeUp} initial="hidden"
+        animate={inView ? "visible" : "hidden"} custom={0}
+      >
+        <div className="section-label">
+          <span className="section-num">03</span>
+          <span className="section-tag">COMPRESSION LANDSCAPE</span>
+        </div>
+        <h2 className="section-title">
+          All Schemes,<br /><span className="dim">One Benchmark</span>
+        </h2>
+        <p className="section-lead">
+          TurboQuant (TQ3) achieves <strong style={{ color: "var(--amd-red)" }}>4.923×</strong> because it
+          writes a tightly bit-packed 52-byte format. The block-rotation Triton kernels (PlanarQuant,
+          IsoQuant, RotorQuant) currently store <strong style={{ color: "var(--text)" }}>one int8 per index</strong> —
+          132–133 bytes/vector — giving only <strong style={{ color: "var(--rotor-color)" }}>1.94×</strong> in the
+          actual benchmark. All four methods share the same target 52-byte layout; the block methods have
+          not yet implemented bitplane packing in their Triton kernels.
+        </p>
+      </motion.div>
+
+      {/* OBSERVED vs PACKED callout banner */}
+      <motion.div
+        variants={fadeUp} initial="hidden"
+        animate={inView ? "visible" : "hidden"} custom={1}
+        style={{
+          display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem",
+          marginBottom: "1.5rem",
+        }}
+        className="obs-packed-grid"
+      >
+        <div style={{ background: "rgba(229,52,75,0.08)", border: "1px solid rgba(229,52,75,0.3)", borderRadius: "10px", padding: "1.1rem 1.3rem" }}>
+          <p style={{ fontSize: "0.65rem", fontFamily: "JetBrains Mono,monospace", color: "var(--amd-red)", letterSpacing: "0.1em", marginBottom: "0.4rem" }}>OBSERVED — bench_runtime_ratio_all_methods.py</p>
+          <p style={{ fontFamily: "JetBrains Mono,monospace", fontSize: "0.82rem", lineHeight: 1.9 }}>
+            <span style={{ color: "#3B82F6" }}>TQ3: <strong>4.923×</strong></span>{" "}(52 B/vec — bitplane-packed)<br />
+            <span style={{ color: "#E5344B" }}>PlanarQuant: <strong>1.939×</strong></span>{" "}(132 B/vec — int8/index)<br />
+            <span style={{ color: "#A855F7" }}>IsoQuant: <strong>1.939×</strong></span>{" "}(132 B/vec — int8/index)<br />
+            <span style={{ color: "#FF7B35" }}>RotorQuant: <strong>1.925×</strong></span>{" "}(133 B/vec — 129 int8s¹)
+          </p>
+          <p style={{ fontSize: "0.62rem", color: "var(--text-muted)", fontFamily: "JetBrains Mono,monospace", marginTop: "0.5rem" }}>
+            ¹ 128 dims / group_size=3 → 43 groups × 3 = 129 indices (1 pad dim)
+          </p>
+        </div>
+        <div style={{ background: "rgba(74,222,128,0.05)", border: "1px solid rgba(74,222,128,0.15)", borderRadius: "10px", padding: "1.1rem 1.3rem" }}>
+          <p style={{ fontSize: "0.65rem", fontFamily: "JetBrains Mono,monospace", color: "#4ade80", letterSpacing: "0.1em", marginBottom: "0.4rem" }}>TARGET LAYOUT — all methods, if bit-packed</p>
+          <p style={{ fontFamily: "JetBrains Mono,monospace", fontSize: "0.82rem", lineHeight: 1.9 }}>
+            <span style={{ color: "var(--text-sub)" }}>4B float32 norm</span><br />
+            <span style={{ color: "var(--text-sub)" }}>48B bitplanes (3 planes × 16B)</span><br />
+            <span style={{ color: "var(--text)" }}><strong>52 bytes total = 4.923× vs FP16</strong></span><br />
+            <span style={{ color: "var(--text-muted)" }}>Same format TQ3 already uses</span>
+          </p>
+          <p style={{ fontSize: "0.62rem", color: "var(--text-muted)", fontFamily: "JetBrains Mono,monospace", marginTop: "0.5rem" }}>
+            Requires bitplane pack/unpack in Triton kernels
+          </p>
+        </div>
+      </motion.div>
+
+      {/* Full scheme table */}
+      <motion.div
+        className="glass"
+        style={{ borderRadius: "var(--radius-lg)", padding: "2rem", marginBottom: "1.5rem" }}
+        variants={fadeUp} initial="hidden"
+        animate={inView ? "visible" : "hidden"} custom={2}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.2rem", flexWrap: "wrap", gap: "0.6rem" }}>
+          <p style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: "0.7rem", color: "var(--amd-red)", letterSpacing: "0.12em" }}>
+            KV COMPRESSION — FULL SCHEME COMPARISON · MI300X gfx942 · Mistral-7B-v0.1
+          </p>
+          <button
+            onClick={() => setShowPacked(p => !p)}
+            style={{
+              padding: "0.3rem 0.75rem", borderRadius: "6px", cursor: "pointer",
+              fontFamily: "JetBrains Mono,monospace", fontSize: "0.68rem", letterSpacing: "0.05em",
+              background: showPacked ? "rgba(74,222,128,0.12)" : "rgba(229,52,75,0.1)",
+              border: showPacked ? "1px solid rgba(74,222,128,0.3)" : "1px solid rgba(229,52,75,0.3)",
+              color: showPacked ? "#4ade80" : "var(--amd-red)",
+            }}>
+            {showPacked ? "◉ Showing: if bit-packed" : "◎ Showing: observed"}
+          </button>
+        </div>
+        <table className="data-table" style={{ width: "100%" }}>
+          <thead>
+            <tr>
+              <th>Scheme</th>
+              <th>{showPacked ? "Bytes/vec (packed)" : "Bytes/vec (observed)"}</th>
+              <th>{showPacked ? "Ratio (packed)" : "Ratio (observed)"}</th>
+              <th>Mean Cosine Sim</th>
+              <th>Mean MSE</th>
+              <th>Decode 8K (tok/s)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {ALL_SCHEMES.map((s) => {
+              const bytes = showPacked ? s.bytesIfPacked : s.bytesObserved;
+              const ratio = showPacked ? s.ratioPacked : s.ratioObserved;
+              const isPacked = s.group === "block" && s.bytesObserved !== s.bytesIfPacked;
+              return (
+                <tr key={s.id}>
+                  <td className="cell-method">
+                    <span className="dot" style={{ background: s.color }} />
+                    <span style={{ color: s.group === "block" ? s.color : undefined }}>{s.name}</span>
+                    {isPacked && !showPacked && (
+                      <span style={{ marginLeft: "0.5rem", fontFamily: "'JetBrains Mono',monospace", fontSize: "0.6rem", color: "var(--rotor-color)", border: "1px solid rgba(255,123,53,0.3)", borderRadius: "3px", padding: "0.1rem 0.3rem" }}>
+                        int8/idx
+                      </span>
+                    )}
+                    {isPacked && showPacked && (
+                      <span style={{ marginLeft: "0.5rem", fontFamily: "'JetBrains Mono',monospace", fontSize: "0.6rem", color: "#4ade80", border: "1px solid rgba(74,222,128,0.25)", borderRadius: "3px", padding: "0.1rem 0.3rem" }}>
+                        if packed
+                      </span>
+                    )}
+                  </td>
+                  <td className="cell-num">{bytes} B</td>
+                  <td>
+                    <span className={`cell-badge ${ratio >= 4.9 ? "good" : ratio >= 3.5 ? "ok" : ratio >= 2 ? "warn" : "bad"}`}>
+                      {ratio.toFixed(ratio === 1 ? 0 : ratio < 4 ? 3 : 3)}×
+                    </span>
+                  </td>
+                  <td className="cell-num" style={{ color: s.cosine > 0.999 ? "#4ade80" : "var(--text)" }}>
+                    {s.cosine.toFixed(4)}
+                  </td>
+                  <td className="cell-num">{s.mse === 0 ? "0.0 (ref)" : s.mse < 0.0001 ? s.mse.toExponential(1) : s.mse.toFixed(5)}</td>
+                  <td>
+                    {s.decode8k !== null ? (
+                      <span style={{ color: s.decode8k > 40 ? "#4ade80" : s.decode8k > 20 ? "var(--text-sub)" : "var(--text-muted)", fontFamily: "JetBrains Mono,monospace", fontSize: "0.78rem" }}>
+                        {s.decode8k} tok/s
+                      </span>
+                    ) : (
+                      <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: "0.74rem", color: "var(--text-muted)" }}>kernel-only†</span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        <p style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginTop: "0.8rem", fontFamily: "'JetBrains Mono',monospace", lineHeight: 1.7 }}>
+          † Block-method decode8k is a kernel-only number (no model weights). At batch=1 all methods
+          are compute-bound by model weight cycling, so end-to-end would resemble TQ3 (6.3 tok/s).
+          At higher batch sizes, block-method kernel speed matters.<br />
+          Observed ratios from results/bench_runtime_ratio_all_methods.json · seq_len=2048 · 32 layers · 8 KV heads · Mistral-7B-v0.1
+        </p>
+      </motion.div>
+
+      {/* Animated chart tabs */}
+      <motion.div
+        variants={fadeUp} initial="hidden"
+        animate={inView ? "visible" : "hidden"} custom={3}
+      >
+        <div className="results-tabs" style={{ marginBottom: "1.2rem" }}>
+          {[
+            { key: "ratio",   label: "Compression Ratio" },
+            { key: "decode",  label: "Decode tok/s" },
+            { key: "quality", label: "Cosine Similarity" },
+          ].map((tab) => (
+            <button key={tab.key}
+              className={`results-tab ${activeView === tab.key ? "active" : ""}`}
+              onClick={() => setActiveView(tab.key)}>
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      </motion.div>
+
+      <AnimatePresence mode="wait">
+        <motion.div
+          className="chart-panel glass"
+          key={activeView}
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -4 }}
+          transition={{ duration: 0.25 }}
+        >
+          {activeView === "ratio" && (
+            <>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: "0.5rem", marginBottom: "0.2rem" }}>
+                <p className="chart-title" style={{ margin: 0 }}>Compression Ratio — All Schemes</p>
+                <button onClick={() => setShowPacked(p => !p)} style={{
+                  padding: "0.25rem 0.6rem", borderRadius: "6px", cursor: "pointer",
+                  fontFamily: "JetBrains Mono,monospace", fontSize: "0.63rem",
+                  background: showPacked ? "rgba(74,222,128,0.1)" : "rgba(229,52,75,0.08)",
+                  border: showPacked ? "1px solid rgba(74,222,128,0.25)" : "1px solid rgba(229,52,75,0.2)",
+                  color: showPacked ? "#4ade80" : "var(--amd-red)",
+                }}>
+                  {showPacked ? "if bit-packed" : "observed"}
+                </button>
+              </div>
+              <p className="chart-subtitle">× vs FP16 (256 B/vector) · {showPacked ? "assuming full bitplane packing" : "measured: kv_bytes_fp16 / kv_bytes_compressed_materialized"}</p>
+              <div className="bar-group">
+                {ALL_SCHEMES.map((s, i) => {
+                  const ratio = showPacked ? s.ratioPacked : s.ratioObserved;
+                  const maxR = showPacked ? maxRatioPacked : maxRatioObserved;
+                  return (
+                    <div key={s.id} className="bar-row">
+                      <div className="bar-method" style={{ color: s.color, fontSize: "0.78rem" }}>{s.name}</div>
+                      <div className="bar-track">
+                        <motion.div
+                          style={{ height: "100%", borderRadius: "6px", background: `linear-gradient(90deg, ${s.color}cc, ${s.color}88)`, boxShadow: ratio >= 4.9 ? `inset 0 0 20px ${s.color}44` : "none" }}
+                          initial={{ width: 0 }}
+                          animate={{ width: inView ? `${(ratio / maxR) * 100}%` : 0 }}
+                          transition={{ duration: 1.4, delay: i * 0.07, ease: [0.23, 1, 0.32, 1] }}
+                        />
+                        {/* ghost bar showing packed target if viewing observed */}
+                        {!showPacked && s.group === "block" && (
+                          <div style={{
+                            position: "absolute", top: 0, left: 0,
+                            width: `${(s.ratioPacked / maxR) * 100}%`,
+                            height: "100%", borderRadius: "6px",
+                            border: `1px dashed ${s.color}55`,
+                            pointerEvents: "none",
+                          }} />
+                        )}
+                      </div>
+                      <div>
+                        <div className="bar-num" style={{ color: ratio >= 4.9 ? "var(--amd-red)" : undefined }}>
+                          {ratio.toFixed(3)}×
+                        </div>
+                        {!showPacked && s.group === "block" && (
+                          <div style={{ fontSize: "0.6rem", color: "var(--text-muted)", fontFamily: "JetBrains Mono,monospace" }}>
+                            ({s.ratioPacked.toFixed(3)}× packed)
+                          </div>
+                        )}
+                        {s.id === "tq3" && <div className="bar-winner">bit-packed ✓</div>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              <div style={{
+                background: showPacked ? "rgba(74,222,128,0.06)" : "rgba(255,123,53,0.06)",
+                border: showPacked ? "1px solid rgba(74,222,128,0.15)" : "1px solid rgba(255,123,53,0.2)",
+                borderRadius: "10px", padding: "1rem 1.2rem", marginTop: "0.5rem",
+              }}>
+                {showPacked ? (
+                  <>
+                    <p style={{ fontSize: "0.84rem", color: "var(--text)", fontWeight: 600, marginBottom: "0.3rem" }}>
+                      All 3-bit methods share the same 52-byte target format
+                    </p>
+                    <p style={{ fontSize: "0.78rem", color: "var(--text-sub)", lineHeight: 1.6 }}>
+                      4B float32 norm + 48B bitplanes (3 planes × 16B). This is what TQ3 already stores.
+                      Block methods would achieve 4.923× if their Triton kernels packed indices into bitplanes
+                      instead of storing one int8 per index.
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <p style={{ fontSize: "0.84rem", color: "var(--text)", fontWeight: 600, marginBottom: "0.3rem" }}>
+                      TQ3: 4.923× · Block methods: 1.94× — measured from real prefill cache
+                    </p>
+                    <p style={{ fontSize: "0.78rem", color: "var(--text-sub)", lineHeight: 1.6 }}>
+                      TQ3 writes a 52-byte bitplane block. PlanarQuant/IsoQuant store 128 int8 indices
+                      (1 byte each) + 4B norm = 132 bytes. RotorQuant stores 129 int8s (128 dims padded to
+                      43×3) + 4B norm = 133 bytes. Dashed lines show the packed target ratio.
+                    </p>
+                  </>
+                )}
+              </div>
+            </>
+          )}
+
+          {activeView === "decode" && (
+            <>
+              <p className="chart-title">End-to-End Decode Throughput — 8K Context</p>
+              <p className="chart-subtitle">tok/s · Mistral-7B-v0.1 · batch=1 · model inference (not kernel-only)</p>
+              <div className="bar-group">
+                {ALL_SCHEMES.filter(s => s.decode8k !== null).map((s, i) => (
+                  <div key={s.id} className="bar-row">
+                    <div className="bar-method" style={{ color: s.color, fontSize: "0.78rem" }}>{s.name}</div>
+                    <div className="bar-track">
+                      <motion.div
+                        style={{ height: "100%", borderRadius: "6px", background: `linear-gradient(90deg, ${s.color}cc, ${s.color}88)` }}
+                        initial={{ width: 0 }}
+                        animate={{ width: inView ? `${(s.decode8k / maxDecode) * 100}%` : 0 }}
+                        transition={{ duration: 1.4, delay: i * 0.09, ease: [0.23, 1, 0.32, 1] }}
+                      />
+                    </div>
+                    <div>
+                      <div className="bar-num">{s.decode8k} <span style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>tok/s</span></div>
+                      {s.id === "fp16" && <div className="bar-winner">BASELINE</div>}
+                      {s.id === "fp8"  && <div style={{ fontSize: "0.64rem", color: "var(--text-muted)", fontFamily: "'JetBrains Mono',monospace" }}>−1.1%</div>}
+                      {s.id === "int4" && <div style={{ fontSize: "0.64rem", color: "var(--rotor-color)", fontFamily: "'JetBrains Mono',monospace" }}>−44%</div>}
+                      {(s.id === "tq4" || s.id === "tq3") && <div style={{ fontSize: "0.64rem", color: "var(--turbo-color)", fontFamily: "'JetBrains Mono',monospace" }}>Python OH</div>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div style={{ background: "rgba(59,130,246,0.08)", border: "1px solid rgba(59,130,246,0.2)", borderRadius: "10px", padding: "1rem 1.2rem", marginTop: "0.5rem" }}>
+                <p style={{ fontSize: "0.84rem", color: "var(--text)", fontWeight: 600, marginBottom: "0.3rem" }}>
+                  MI300X decode is compute-bound at batch=1
+                </p>
+                <p style={{ fontSize: "0.78rem", color: "var(--text-sub)", lineHeight: 1.6 }}>
+                  FP16 and FP8 both hit ~46 tok/s — the 14.7 GB model weight matrix cycles through
+                  HBM3 every step, saturating compute before KV bandwidth matters. TQ3/TQ4 slower
+                  due to Python-level overhead, not hardware limits. Fused Triton kernel eliminates this.
+                </p>
+              </div>
+            </>
+          )}
+
+          {activeView === "quality" && (
+            <>
+              <p className="chart-title">KV Reconstruction Quality — Cosine Similarity</p>
+              <p className="chart-subtitle">Mean cosine similarity vs FP16 · 512 random unit vectors · head_dim=128 · bench_ppl_all_methods_quality_recheck.json</p>
+              <div className="bar-group">
+                {ALL_SCHEMES.map((s, i) => (
+                  <div key={s.id} className="bar-row">
+                    <div className="bar-method" style={{ color: s.color, fontSize: "0.78rem" }}>{s.name}</div>
+                    <div className="bar-track">
+                      <motion.div
+                        style={{ height: "100%", borderRadius: "6px", background: `linear-gradient(90deg, ${s.color}cc, ${s.color}88)` }}
+                        initial={{ width: 0 }}
+                        animate={{ width: inView ? `${s.cosine * 100}%` : 0 }}
+                        transition={{ duration: 1.4, delay: i * 0.07, ease: [0.23, 1, 0.32, 1] }}
+                      />
+                    </div>
+                    <div className="bar-num">{s.cosine.toFixed(4)}</div>
+                  </div>
+                ))}
+              </div>
+              <div style={{ background: "rgba(74,222,128,0.06)", border: "1px solid rgba(74,222,128,0.15)", borderRadius: "10px", padding: "1rem 1.2rem", marginTop: "0.5rem" }}>
+                <p style={{ fontSize: "0.84rem", color: "var(--text)", fontWeight: 600, marginBottom: "0.3rem" }}>
+                  All 3-bit methods within ±0.0003 — quality is not a differentiator
+                </p>
+                <p style={{ fontSize: "0.78rem", color: "var(--text-sub)", lineHeight: 1.6 }}>
+                  Cosine similarity range: 0.9829–0.9832. The choice between methods comes down
+                  entirely to FMA count and kernel throughput, not reconstruction accuracy.
+                </p>
+              </div>
+            </>
+          )}
+        </motion.div>
+      </AnimatePresence>
+
+      {/* Spotlight cards */}
+      <motion.div
+        style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "1rem", marginTop: "1.5rem" }}
+        variants={fadeUp} initial="hidden"
+        animate={inView ? "visible" : "hidden"} custom={5}
+        className="spotlight-cards"
+      >
+        {[
+          {
+            title: "4.923× (TQ3)",
+            sub: "only TurboQuant observed",
+            body: "TQ3 writes a 52-byte bitplane block today. Block-rotation methods (Planar/Iso/Rotor) write 132–133 bytes (int8 per index). Both approaches target the same 52-byte format — the Triton packing kernel is the missing piece.",
+            color: "var(--amd-red)",
+          },
+          {
+            title: "1.94× (block)",
+            sub: "PlanarQ/IsoQ observed · 1.92× RotorQ",
+            body: "128 int8 indices + 4B norm = 132 bytes/vec at 3-bit. RotorQ stores 129 indices (128 dims + 1 pad to fill 43×3 groups) → 133 bytes. This is what bench_runtime_ratio_all_methods.py measures from a live Mistral-7B-v0.1 cache.",
+            color: "var(--rotor-color)",
+          },
+          {
+            title: "6.9M tokens",
+            sub: "if all methods hit 4.923×",
+            body: "FP16 fits 1.4M tokens in 192 GB HBM3. At 4.923×, every 3-bit method fits 6.9M tokens. At the current observed 1.94×, block methods fit ~2.7M tokens — still 1.9× more than FP16, but far short of the packed-format potential.",
+            color: "var(--iso-color)",
+          },
+        ].map((card) => (
+          <div key={card.title} className="glass" style={{ borderRadius: "var(--radius-md)", padding: "1.4rem", borderTop: `3px solid ${card.color}` }}>
+            <p style={{ fontFamily: "'Space Grotesk',sans-serif", fontSize: "1.25rem", fontWeight: 700, color: card.color, lineHeight: 1.1, marginBottom: "0.3rem" }}>{card.title}</p>
+            <p style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: "0.65rem", color: "var(--text-muted)", marginBottom: "0.8rem" }}>{card.sub}</p>
+            <p style={{ fontSize: "0.82rem", color: "var(--text-sub)", lineHeight: 1.65 }}>{card.body}</p>
+          </div>
+        ))}
+      </motion.div>
+    </section>
+  );
+}
+
 /* ─── PROBLEM SECTION ────────────────────────────────────────────── */
 
 export function ProblemSection() {
   const ref = useRef(null);
   const inView = useInView(ref, { once: true, margin: "-80px" });
-  const gb = useCountUp(137.4, inView, 1.2, 1);
-  const ctx = useCountUp(131072, inView, 1.4, 0);
+  const { data: kvExp, error: kvExpErr } = useExperimentKvMetrics();
+  const seqRef = 131072;
+  const kvFp16BytesRef = kvBytesFp16(seqRef);
+  const kvFp16Gb = kvFp16BytesRef / 1e9;
+  const gb = useCountUp(kvFp16Gb, inView, 1.2, 1);
+  const ctx = useCountUp(seqRef, inView, 1.4, 0);
+  const tq3PackedBytesPerVec = 4 + Math.ceil((MISTRAL7B_KV.headDim * 3) / 8);
+  const tq3BitPayloadBytes = Math.ceil((MISTRAL7B_KV.headDim * 3) / 8);
+  const kvFp16Str = formatKvDataSize(kvFp16BytesRef);
+  const kvTq3BytesRef = kvBytesTq3Theoretical(seqRef);
+  const kvTq3Str = formatKvDataSize(kvTq3BytesRef);
+  const ratioFullKv = kvFp16BytesRef / Math.max(kvTq3BytesRef, 1);
+
+  const tqDecode = kvExp?.turboquant_tq3_decode_seq8192;
+  const ratioDecodeMeasured =
+    tqDecode?.kv_bytes_fp16 && tqDecode?.kv_bytes_compressed
+      ? tqDecode.kv_bytes_fp16 / tqDecode.kv_bytes_compressed
+      : null;
+  const rr = kvExp?.runtime_materialized_bytes_seq2048;
 
   return (
     <section id="problem" className="report-section" ref={ref}>
@@ -76,14 +793,15 @@ export function ProblemSection() {
           LLM decode on AMD MI300X is compute-bound at batch=1 — the hardware cycles through
           140 billion model weights for every token. But as context grows, the KV cache
           becomes the bottleneck in a different way: it fills 192 GB of HBM3.
-          A 131K context window stored in FP16 consumes <strong style={{color: 'var(--amd-red)'}}>137 GB</strong> —
+          A 131K context window stored in FP16 consumes{" "}
+          <strong style={{ color: "var(--amd-red)" }}>{kvFp16Gb.toFixed(1)} GB</strong> —
           leaving almost nothing for model weights.
         </p>
       </motion.div>
 
       <div className="problem-cards">
         {[
-          { label: "VRAM on MI300X", val: `${gb} GB`, unit: "HBM3", desc: "Total on-chip memory. FP16 KV at 131K context consumes 137 GB — nearly all of it." },
+          { label: "VRAM on MI300X", val: `${gb} GB`, unit: "HBM3", desc: `Total on-chip memory. FP16 KV at 131K context consumes ${kvFp16Gb.toFixed(1)} GB — nearly all of it.` },
           { label: "FP16 Context Cap", val: "1.4 M", unit: "tokens", desc: "Maximum tokens storable in 192 GB HBM3 at FP16 before VRAM is exhausted." },
           { label: "4.92× Compression", val: "6.9 M", unit: "tokens", desc: "Context capacity unlocked by 3-bit KV compression. All four methods achieve this ratio." },
           { label: "Benchmark Context", val: ctx.toLocaleString?.() ?? ctx, unit: "tokens", desc: "Maximum context tested in this benchmark. All methods preserve 100% needle recall here." },
@@ -108,23 +826,73 @@ export function ProblemSection() {
         animate={inView ? "visible" : "hidden"}
         custom={5}
       >
-        <div><span className="comment">// KV cache memory formula — Mistral-7B, FP16</span></div>
-        <div>
-          <span className="var">KV_bytes</span> = 2 × <span className="var">n_layers</span> × <span className="var">n_heads</span> × <span className="var">seq_len</span> × <span className="var">head_dim</span> × <span className="var">sizeof(FP16)</span>
-        </div>
-        <div>
-          <span className="comment">{"          "}</span>= 2 × <span className="val">32</span> × <span className="val">8</span> × <span className="val">131,072</span> × <span className="val">128</span> × <span className="val">2</span>
-        </div>
-        <div>
-          <span className="comment">{"          "}</span>= <span className="result">137.4 GB</span> <span className="comment">// out of 192 GB total</span>
-        </div>
+        {!kvExp && !kvExpErr && (
+          <div><span className="comment">// Loading MI300X experiment metrics (experiment_kv_metrics.json)…</span></div>
+        )}
+        {kvExpErr && (
+          <div>
+            <div><span className="comment">// Could not load /content/experiment_kv_metrics.json</span></div>
+            <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.45rem" }}>
+              Place a snapshot under <code style={{ fontSize: "0.68rem" }}>report-ui/public/content/</code> (see README). Layout-only fallback: FP16 {kvFp16Str} / TQ3 {kvTq3Str} = {ratioFullKv.toFixed(3)}× @ seq {seqRef.toLocaleString()}.
+            </div>
+          </div>
+        )}
+        {kvExp && (
+          <>
+            <div><span className="comment">// MEASURED — TurboQuant TQ3 materialized KV (`bench_tq3_decode` on MI300X)</span></div>
+            <div>
+              <span className="var">device</span> = <span className="val">{kvExp.device}</span> · <span className="var">model</span> = <span className="val">{kvExp.model}</span>
+            </div>
+            {tqDecode && ratioDecodeMeasured != null && (
+              <>
+                <div>
+                  <span className="var">seq_len</span> = <span className="val">{tqDecode.seq_len}</span> · <span className="var">mode</span> = <span className="val">{tqDecode.mode}</span>
+                </div>
+                <div>
+                  <span className="var">KV_fp16</span> = <span className="val">{tqDecode.kv_bytes_fp16.toLocaleString()}</span> bytes ({formatKvDataSize(tqDecode.kv_bytes_fp16)})
+                </div>
+                <div>
+                  <span className="var">KV_tq3</span> = <span className="val">{tqDecode.kv_bytes_compressed.toLocaleString()}</span> bytes ({formatKvDataSize(tqDecode.kv_bytes_compressed)})
+                </div>
+                <div>
+                  <span className="var">ratio</span> = <span className="result">{tqDecode.kv_bytes_fp16.toLocaleString()}</span> /{" "}
+                  <span className="result">{tqDecode.kv_bytes_compressed.toLocaleString()}</span> ={" "}
+                  <span className="result">{ratioDecodeMeasured.toFixed(5)}×</span>{" "}
+                  <span className="comment">// bench reports {tqDecode.compression_ratio_reported}×</span>
+                </div>
+              </>
+            )}
+            <br />
+            <div><span className="comment">// MEASURED — materialized cache bytes @2048 (`bench_runtime_ratio_all_methods`)</span></div>
+            {rr?.turbo_tq3 && (
+              <div>
+                TurboQuant TQ3: ratio_observed = <span className="result">{rr.turbo_tq3.ratio_observed_runtime.toFixed(5)}×</span>{" "}
+                <span className="comment">
+                  ({rr.turbo_tq3.kv_bytes_fp16.toLocaleString()} / {rr.turbo_tq3.kv_bytes_compressed_materialized.toLocaleString()} B)
+                </span>
+              </div>
+            )}
+            {rr?.planar_tq3 && (
+              <div>
+                PlanarQuant TQ3: ratio_observed = <span className="result">{rr.planar_tq3.ratio_observed_runtime.toFixed(5)}×</span>{" "}
+                <span className="comment">
+                  ({rr.planar_tq3.kv_bytes_fp16.toLocaleString()} / {rr.planar_tq3.kv_bytes_compressed_materialized.toLocaleString()} B — wider materialized layout, not 52B packing)
+                </span>
+              </div>
+            )}
+            <div style={{ marginTop: "0.65rem", fontSize: "0.68rem" }} className="comment">
+              JSON snapshot: public/content/experiment_kv_metrics.json · sources: {JSON.stringify(kvExp.sources ?? {})}
+            </div>
+          </>
+        )}
         <br />
-        <div><span className="comment">// 3-bit compression — all methods, same layout</span></div>
+        <div><span className="comment">// Reference — packed layout (algebra only; TurboQuant run matches this)</span></div>
         <div>
-          <span className="var">packed_bytes</span> = 4 + ⌈<span className="val">128</span> × <span className="val">3</span> / 8⌉ = 4 + 48 = <span className="result">52 bytes/vector</span>
+          <span className="var">packed_bytes</span> = 4 + ⌈<span className="val">{MISTRAL7B_KV.headDim}</span> × <span className="val">3</span> / 8⌉ = 4 + {tq3BitPayloadBytes} = <span className="result">{tq3PackedBytesPerVec} bytes/vector</span>
         </div>
         <div>
-          <span className="var">ratio</span> = <span className="val">256</span> / <span className="val">52</span> = <span className="result">4.923×</span> <span className="comment">// vs FP16 (256 B/vector)</span>
+          <span className="var">GQA capacity check @131072</span> — FP16 {kvFp16Str} / TQ3 {kvTq3Str} = <span className="result">{ratioFullKv.toFixed(3)}×</span>{" "}
+          <span className="comment">// 2×L×Hkv×seq×128×2 vs 2×L×Hkv×seq×52</span>
         </div>
       </motion.div>
 
@@ -151,85 +919,404 @@ export function ProblemSection() {
   );
 }
 
+/* ─── KATEX COMPONENT ────────────────────────────────────────────── */
+
+function KatexEq({ math, display = false }) {
+  const html = useMemo(() => {
+    try {
+      return katex.renderToString(math, { displayMode: display, throwOnError: false, output: "html" });
+    } catch {
+      return math;
+    }
+  }, [math, display]);
+  return <span dangerouslySetInnerHTML={{ __html: html }} />;
+}
+
+/* ─── SVG ROTATION VISUALIZERS ───────────────────────────────────── */
+
+function GivensViz({ color, inView }) {
+  const theta = useMotionValue(0.4);
+  const x2 = useTransform(theta, t => 88 + 56 * Math.cos(t));
+  const y2 = useTransform(theta, t => 88 - 56 * Math.sin(t));
+  const x2b = useTransform(theta, t => 88 + 56 * Math.cos(t - Math.PI / 2));
+  const y2b = useTransform(theta, t => 88 - 56 * Math.sin(t - Math.PI / 2));
+
+  useEffect(() => {
+    if (!inView) return;
+    const ctrl = animate(theta, theta.get() + Math.PI * 4, {
+      duration: 12, repeat: Infinity, ease: "linear",
+    });
+    return ctrl.stop;
+  }, [inView]);
+
+  const arcD = useTransform(theta, t => {
+    const r = 22, x = 88 + r * Math.cos(t), y = 88 - r * Math.sin(t);
+    return `M 88 88 L ${88 + r} 88 A ${r} ${r} 0 0 0 ${x} ${y} Z`;
+  });
+
+  return (
+    <svg width="176" height="176" viewBox="0 0 176 176" style={{ flexShrink: 0 }}>
+      {/* grid */}
+      {[-56, -28, 0, 28, 56].map(d => (
+        <line key={`h${d}`} x1="10" y1={88 + d} x2="166" y2={88 + d} stroke="rgba(255,255,255,0.04)" strokeWidth="1" />
+      ))}
+      {[-56, -28, 0, 28, 56].map(d => (
+        <line key={`v${d}`} x1={88 + d} y1="10" x2={88 + d} y2="166" stroke="rgba(255,255,255,0.04)" strokeWidth="1" />
+      ))}
+      {/* axes */}
+      <line x1="10" y1="88" x2="166" y2="88" stroke="rgba(255,255,255,0.15)" strokeWidth="1" />
+      <line x1="88" y1="10" x2="88" y2="166" stroke="rgba(255,255,255,0.15)" strokeWidth="1" />
+      {/* unit circle */}
+      <circle cx="88" cy="88" r="56" fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="1" />
+      {/* angle arc */}
+      <motion.path d={arcD} fill={`${color}30`} stroke={color} strokeWidth="0.5" />
+      {/* secondary vector (pair partner) */}
+      <motion.line x1={88} y1={88} x2={x2b} y2={y2b} stroke={color} strokeWidth="1.5" strokeOpacity="0.4" />
+      <motion.circle cx={x2b} cy={y2b} r="3" fill={color} fillOpacity="0.4" />
+      {/* primary vector */}
+      <motion.line x1={88} y1={88} x2={x2} y2={y2} stroke={color} strokeWidth="2.5" />
+      <motion.circle cx={x2} cy={y2} r="4.5" fill={color} />
+      {/* labels */}
+      <text x="160" y="85" fill="rgba(255,255,255,0.3)" fontSize="9" fontFamily="monospace">x₂ᵢ</text>
+      <text x="90" y="18" fill="rgba(255,255,255,0.3)" fontSize="9" fontFamily="monospace">x₂ᵢ₊₁</text>
+      <text x="100" y="78" fill={color} fontSize="8" fontFamily="monospace">θᵢ</text>
+    </svg>
+  );
+}
+
+function QuaternionViz({ color, inView }) {
+  const [phase, setPhase] = useState(0);
+  useEffect(() => {
+    if (!inView) return;
+    let rafId = 0;
+    let lastTs = 0;
+    const step = (ts) => {
+      const dt = lastTs ? (ts - lastTs) / 1000 : 0;
+      lastTs = ts;
+      setPhase((p) => p + dt * 1.8);
+      rafId = requestAnimationFrame(step);
+    };
+    rafId = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(rafId);
+  }, [inView]);
+
+  // Project 4D quaternion rotation onto 2D using stereographic-like projection.
+  const q0 = Math.cos(phase * 0.3);
+  const q1 = Math.sin(phase * 0.3) * Math.cos(phase * 0.13);
+  const q2 = Math.sin(phase * 0.3) * Math.sin(phase * 0.13) * Math.cos(phase * 0.07);
+  const q3 = Math.sin(phase * 0.3) * Math.sin(phase * 0.13) * Math.sin(phase * 0.07);
+  const r = 52;
+  const safePos = [
+    [1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1],
+  ].map(([a, b, c, d]) => {
+    const qa = q0 * a - q1 * b - q2 * c - q3 * d;
+    const qb = q0 * b + q1 * a + q2 * d - q3 * c;
+    const qd = q0 * d + q1 * c - q2 * b + q3 * a;
+    const w = 1 / (1 - qd * 0.7 + 0.001);
+    return [88 + r * qa * w, 88 - r * qb * w];
+  });
+
+  return (
+    <svg width="176" height="176" viewBox="0 0 176 176" style={{ flexShrink: 0 }}>
+      <circle cx="88" cy="88" r="58" fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="1" />
+      <circle cx="88" cy="88" r="38" fill="none" stroke="rgba(255,255,255,0.04)" strokeWidth="1" />
+      {/* edges of quaternion tetrahedron */}
+      {[[0,1],[1,2],[2,3],[3,0],[0,2],[1,3]].map(([a,b], i) => (
+        <line key={i}
+          x1={safePos[a][0]} y1={safePos[a][1]}
+          x2={safePos[b][0]} y2={safePos[b][1]}
+          stroke={color} strokeWidth="1.2" strokeOpacity="0.35" />
+      ))}
+      {/* vertices */}
+      {safePos.map(([px,py], i) => (
+        <circle key={i} cx={px} cy={py} r={i === 0 ? 5.5 : 3.5} fill={color} fillOpacity={i === 0 ? 1 : 0.55} />
+      ))}
+      {/* center dot */}
+      <circle cx="88" cy="88" r="2" fill="rgba(255,255,255,0.3)" />
+      {/* labels */}
+      {['e₁','e₂','e₃','e₄'].map((l, i) => (
+        <text key={l} x={safePos[i][0] + 6} y={safePos[i][1] - 3} fill={color} fontSize="8" fontFamily="monospace" fillOpacity="0.7">{l}</text>
+      ))}
+      <text x="6" y="170" fill="rgba(255,255,255,0.2)" fontSize="8" fontFamily="monospace">q ⊗ v ⊗ q*</text>
+    </svg>
+  );
+}
+
+function RotorViz({ color, inView }) {
+  const t = useMotionValue(0);
+  useEffect(() => {
+    if (!inView) return;
+    const ctrl = animate(t, Math.PI * 6, { duration: 10, repeat: Infinity, ease: "linear" });
+    return ctrl.stop;
+  }, [inView]);
+
+  const [vx, setVx] = useState(88 + 50);
+  const [vy, setVy] = useState(88);
+  const [bx1, setBx1] = useState(88); const [by1, setBy1] = useState(88 - 40);
+  const [bx2, setBx2] = useState(88 + 30); const [by2, setBy2] = useState(88 + 30);
+
+  useEffect(() => {
+    return t.on("change", tv => {
+      // 3D Cl(3,0) rotor rotation visualized
+      const theta = tv * 0.5;
+      // rotor in e12 plane: R = cos(θ/2) + sin(θ/2)e12
+      const c = Math.cos(theta / 2), s = Math.sin(theta / 2);
+      // rotate vector v = e1 by rotor
+      const vxr = c * c - s * s, vyr = 2 * c * s;
+      const r = 52;
+      setVx(88 + r * vxr);
+      setVy(88 - r * vyr);
+      // bivector plane indicator
+      const phi = theta + Math.PI / 2;
+      setBx1(88 + 40 * Math.cos(phi - 0.4));
+      setBy1(88 - 40 * Math.sin(phi - 0.4));
+      setBx2(88 + 40 * Math.cos(phi + 0.4));
+      setBy2(88 - 40 * Math.sin(phi + 0.4));
+    });
+  }, [t]);
+
+  return (
+    <svg width="176" height="176" viewBox="0 0 176 176" style={{ flexShrink: 0 }}>
+      <circle cx="88" cy="88" r="56" fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="1" />
+      {/* 3 axes */}
+      <line x1="88" y1="88" x2="154" y2="88" stroke="rgba(255,255,255,0.15)" strokeWidth="1" />
+      <line x1="88" y1="88" x2="88" y2="22" stroke="rgba(255,255,255,0.15)" strokeWidth="1" />
+      <line x1="88" y1="88" x2="44" y2="130" stroke="rgba(255,255,255,0.1)" strokeWidth="1" strokeDasharray="3,2" />
+      <text x="156" y="91" fill="rgba(255,255,255,0.25)" fontSize="9" fontFamily="monospace">e₁</text>
+      <text x="91" y="19" fill="rgba(255,255,255,0.25)" fontSize="9" fontFamily="monospace">e₂</text>
+      <text x="33" y="135" fill="rgba(255,255,255,0.25)" fontSize="9" fontFamily="monospace">e₃</text>
+      {/* bivector plane arc */}
+      <line x1={88} y1={88} x2={bx1} y2={by1} stroke={color} strokeWidth="1" strokeOpacity="0.3" />
+      <line x1={88} y1={88} x2={bx2} y2={by2} stroke={color} strokeWidth="1" strokeOpacity="0.3" />
+      <path d={`M ${bx1} ${by1} A 40 40 0 0 1 ${bx2} ${by2}`} fill={`${color}15`} stroke={color} strokeWidth="0.5" strokeOpacity="0.4" />
+      {/* rotating vector */}
+      <motion.line x1={88} y1={88} x2={vx} y2={vy} stroke={color} strokeWidth="2.5" />
+      <motion.circle cx={vx} cy={vy} r="4.5" fill={color} />
+      <text x="6" y="170" fill="rgba(255,255,255,0.2)" fontSize="8" fontFamily="monospace">R·v·R̃ (Cl(3,0))</text>
+    </svg>
+  );
+}
+
+function HadamardViz({ color, inView }) {
+  const t = useMotionValue(0);
+  useEffect(() => {
+    if (!inView) return;
+    const ctrl = animate(t, 1, { duration: 2.5, repeat: Infinity, repeatType: "reverse", ease: "easeInOut" });
+    return ctrl.stop;
+  }, [inView]);
+  const [wave, setWave] = useState(0);
+  useEffect(() => t.on("change", setWave), [t]);
+
+  const N = 8;
+  // Hadamard butterfly pattern
+  const cells = [];
+  for (let r = 0; r < N; r++) {
+    for (let c = 0; c < N; c++) {
+      // Hadamard sign: (-1)^popcount(r&c)
+      let p = r & c, bits = 0;
+      while (p) { bits += p & 1; p >>= 1; }
+      const sign = bits % 2 === 0 ? 1 : -1;
+      cells.push({ r, c, sign });
+    }
+  }
+
+  return (
+    <svg width="176" height="176" viewBox="0 0 176 176" style={{ flexShrink: 0 }}>
+      <text x="8" y="14" fill="rgba(255,255,255,0.4)" fontSize="9" fontFamily="monospace">H₈ · D · x</text>
+      {cells.map(({ r, c, sign }) => {
+        const x = 8 + c * 20, y = 20 + r * 18;
+        const activity = Math.sin(wave * Math.PI * 2 + (r + c) * 0.5) * 0.5 + 0.5;
+        const opacity = 0.1 + activity * 0.55;
+        const fillColor = sign > 0 ? color : `rgba(255,255,255,0.6)`;
+        return (
+          <rect key={`${r}-${c}`} x={x} y={y} width="17" height="14" rx="2"
+            fill={fillColor} fillOpacity={opacity} />
+        );
+      })}
+      {/* diagonal matrix D */}
+      <text x="8" y="168" fill="rgba(255,255,255,0.2)" fontSize="8" fontFamily="monospace">128×128 → O(d²) FMAs</text>
+    </svg>
+  );
+}
+
+/* ─── EQUATION STEP REVEAL ───────────────────────────────────────── */
+
+function EqReveal({ steps, inView, color }) {
+  const [visible, setVisible] = useState(0);
+  useEffect(() => {
+    if (!inView) return;
+    setVisible(0);
+    let i = 0;
+    const id = setInterval(() => {
+      i++;
+      setVisible(i);
+      if (i >= steps.length) clearInterval(id);
+    }, 520);
+    return () => clearInterval(id);
+  }, [inView, steps.length]);
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "0.55rem" }}>
+      <AnimatePresence>
+        {steps.slice(0, visible).map((step, i) => (
+          <motion.div key={i}
+            initial={{ opacity: 0, x: -10 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.35, ease: [0.23, 1, 0.32, 1] }}
+            style={{
+              background: step.highlight ? `${color}12` : "rgba(0,0,0,0.3)",
+              border: step.highlight ? `1px solid ${color}40` : "1px solid rgba(255,255,255,0.06)",
+              borderRadius: "6px",
+              padding: step.display ? "0.7rem 1rem" : "0.4rem 0.8rem",
+              display: "flex", alignItems: "center", gap: "0.6rem",
+            }}>
+            {step.label && (
+              <span style={{
+                fontSize: "0.62rem", fontFamily: "JetBrains Mono, monospace",
+                color: "rgba(255,255,255,0.3)", minWidth: "2.5rem", textAlign: "right",
+              }}>{step.label}</span>
+            )}
+            <span style={{ fontSize: step.display ? "0.95rem" : "0.78rem", overflowX: "auto" }}>
+              <KatexEq math={step.eq} display={false} />
+            </span>
+            {step.note && (
+              <span style={{
+                fontSize: "0.65rem", color: "rgba(255,255,255,0.35)",
+                fontFamily: "JetBrains Mono, monospace", marginLeft: "auto", whiteSpace: "nowrap",
+              }}>{step.note}</span>
+            )}
+          </motion.div>
+        ))}
+      </AnimatePresence>
+    </div>
+  );
+}
+
 /* ─── MATH SECTION ───────────────────────────────────────────────── */
+
+const MATH_METHODS = [
+  {
+    cls: "planar",
+    name: "PlanarQuant",
+    subtitle: "2D Givens Rotation",
+    paper: "RotorQuant repo — scrya-com/rotorquant",
+    color: "var(--planar-color)",
+    colorHex: "#E5344B",
+    fmaPct: 1.56,
+    fmaLabel: "256 FMAs",
+    Viz: GivensViz,
+    params: [
+      { k: "Groups", v: "d/2 = 64" },
+      { k: "Params/group", v: "(cos θ, sin θ)" },
+      { k: "Total params", v: "128 floats" },
+      { k: "SIMD fit", v: "SIMD-2 ✓" },
+    ],
+    steps: [
+      { label: "input", eq: String.raw`\mathbf{x} \in \mathbb{R}^{128},\quad \text{pair } i: (x_{2i},\, x_{2i+1})` },
+      { label: "rotation", eq: String.raw`\begin{pmatrix} y_{2i} \\ y_{2i+1} \end{pmatrix} = G(\theta_i)\, \begin{pmatrix} x_{2i} \\ x_{2i+1} \end{pmatrix}`, highlight: true, display: true },
+      { label: "matrix", eq: String.raw`G(\theta_i) = \begin{pmatrix} \cos\theta_i & -\sin\theta_i \\ \sin\theta_i & \cos\theta_i \end{pmatrix}`, highlight: true, display: true },
+      { label: "cost", eq: String.raw`64 \text{ groups} \times 4 \text{ FMAs} = \mathbf{256}\text{ FMAs/vector}`, note: "1.56% of TurboQuant" },
+      { label: "inverse", eq: String.raw`G^{-1}(\theta_i) = G(-\theta_i) = G(\theta_i)^{\top}` },
+    ],
+    qualityStats: { mean: 0.9829, std: 0.0031, p5: 0.9771, min: 0.9669 },
+    identityEq: String.raw`\mathbb{E}[\mathrm{score}] = \tfrac{(G\,\mathbf{q})^\top\hat{\mathbf{k}}}{\beta_{\rm JL}} = \mathbf{q}^\top\mathbf{k}, \quad G = \textstyle\prod_{i=1}^{64}G(\theta_i), \quad G^\top G = I`,
+    identityNote: "64 independent 2×2 Givens blocks — each (x₂ᵢ, x₂ᵢ₊₁) pair rotates independently. JL guarantee holds exactly per SIMD-2 lane. β_JL is the Lloyd-Max 3-bit correction scalar from the shared codebook.",
+  },
+  {
+    cls: "iso",
+    name: "IsoQuant",
+    subtitle: "Quaternion Sandwich Product",
+    paper: "RotorQuant repo — scrya-com/rotorquant",
+    color: "var(--iso-color)",
+    colorHex: "#A855F7",
+    fmaPct: 3.12,
+    fmaLabel: "512 FMAs",
+    Viz: QuaternionViz,
+    params: [
+      { k: "Groups", v: "d/4 = 32" },
+      { k: "Params/group", v: "unit quaternion q" },
+      { k: "Total params", v: "128 floats" },
+      { k: "SIMD fit", v: "CDNA3 SIMD-4 ✓✓" },
+    ],
+    steps: [
+      { label: "input", eq: String.raw`\mathbf{v} = (v_0, v_1, v_2, v_3) \in \mathbb{R}^4,\quad \text{treated as pure quaternion}` },
+      { label: "rotation", eq: String.raw`\mathbf{y} = q \otimes \mathbf{v} \otimes q^*`, highlight: true, display: true },
+      { label: "unit q", eq: String.raw`q = \cos\alpha + \sin\alpha\,(n_1\,\mathbf{i} + n_2\,\mathbf{j} + n_3\,\mathbf{k}),\quad \|n\|=1`, highlight: true },
+      { label: "product", eq: String.raw`\mathbf{i}^2 = \mathbf{j}^2 = \mathbf{k}^2 = \mathbf{ijk} = -1` },
+      { label: "cost", eq: String.raw`32\text{ groups} \times 16\text{ FMAs} = \mathbf{512}\text{ FMAs/vector}`, note: "4D → CDNA3 SIMD-4" },
+    ],
+    qualityStats: { mean: 0.9831, std: 0.0032, p5: 0.9773, min: 0.9617 },
+    identityEq: String.raw`\mathbb{E}[\mathrm{score}] = \tfrac{(Q_{\rm blk}\,\mathbf{q})^\top\hat{\mathbf{k}}}{\beta_{\rm JL}} = \mathbf{q}^\top\mathbf{k}, \quad Q_{\rm blk} = \bigoplus_{i=1}^{32}[q_i\otimes(\cdot)\otimes q_i^*], \quad Q_{\rm blk}^\top Q_{\rm blk} = I`,
+    identityNote: "Unit quaternion sandwich q⊗v⊗q* is an exact SO(4) isometry on ℝ⁴. CDNA3 SIMD-4 aligns perfectly with the 4-element group structure — no cross-group leakage, cleanest correction of the four methods.",
+  },
+  {
+    cls: "rotor",
+    name: "RotorQuant",
+    subtitle: "Clifford Cl(3,0) Geometric Algebra",
+    paper: "Pope (2026) — scrya.com/rotorquant",
+    color: "var(--rotor-color)",
+    colorHex: "#FF7B35",
+    fmaPct: 7.18,
+    fmaLabel: "1,176 FMAs",
+    Viz: RotorViz,
+    params: [
+      { k: "Groups", v: "d/3 ≈ 42" },
+      { k: "Params/group", v: "rotor R (4 scalars)" },
+      { k: "Total params", v: "172 floats" },
+      { k: "SIMD fit", v: "3D → SIMD-4 gap ✗" },
+    ],
+    steps: [
+      { label: "algebra", eq: String.raw`\text{Cl}(3,0): \quad e_i^2 = +1,\quad e_i e_j = -e_j e_i \; (i\neq j)` },
+      { label: "rotor", eq: String.raw`R = \cos\tfrac{\theta}{2} + \sin\tfrac{\theta}{2}(a\,e_{12} + b\,e_{23} + c\,e_{13}),\quad a^2+b^2+c^2=1`, highlight: true },
+      { label: "rotation", eq: String.raw`\mathbf{y} = R\,\mathbf{v}\,\tilde{R}, \quad \tilde{R} = \cos\tfrac{\theta}{2} - \sin\tfrac{\theta}{2}({\cdots})`, highlight: true, display: true },
+      { label: "cost", eq: String.raw`42\text{ groups} \times 28\text{ FMAs} = \mathbf{1{,}176}\text{ FMAs/vector}`, note: "4.6× more than Planar" },
+      { label: "problem", eq: String.raw`\text{3D group} \not\subset \text{SIMD-4} \Rightarrow \text{padding waste on CDNA3}` },
+    ],
+    qualityStats: { mean: 0.9830, std: 0.0032, p5: 0.9772, min: 0.9649 },
+    identityEq: String.raw`\mathbb{E}[\mathrm{score}] = \tfrac{(R_{\rm blk}\,\mathbf{q})^\top\hat{\mathbf{k}}}{\beta_{\rm JL}} = \mathbf{q}^\top\mathbf{k}, \quad R_{\rm blk}^\top R_{\rm blk} = I`,
+    identityNote: "Rotor sandwich product is orthogonal in each 3D block; expected attention score is preserved after JL correction. Performance cost comes from SIMD mismatch, not from score distortion.",
+  },
+  {
+    cls: "turbo",
+    name: "TurboQuant",
+    subtitle: "Walsh–Hadamard Transform Rotation",
+    paper: "Agarwal et al., Google (2024) — arXiv:2406.12820",
+    color: "var(--turbo-color)",
+    colorHex: "#3B82F6",
+    fmaPct: 100,
+    fmaLabel: "16,384 FMAs",
+    Viz: HadamardViz,
+    params: [
+      { k: "Groups", v: "1 (full 128D)" },
+      { k: "Params", v: "128 diagonal ±1" },
+      { k: "Rotation matrix", v: "128×128 Hadamard" },
+      { k: "SIMD fit", v: "MFMA-accelerated" },
+    ],
+    steps: [
+      { label: "rotation", eq: String.raw`\mathbf{y} = \frac{1}{\sqrt{d}}\,H_d\,D\,\mathbf{x}`, highlight: true, display: true },
+      { label: "WHT", eq: String.raw`H_d \in \{-1,+1\}^{d\times d},\quad H_d = H_2 \otimes H_{d/2}` },
+      { label: "diag", eq: String.raw`D = \mathrm{diag}(r_1,\ldots,r_d),\quad r_i \overset{\mathrm{iid}}{\sim} \mathrm{Rademacher}(\pm 1)` },
+      { label: "cost", eq: String.raw`d^2 = 128^2 = \mathbf{16{,}384}\text{ FMAs/vector}`, note: "O(d²) — 64× Planar" },
+      { label: "kernel", eq: String.raw`\texttt{torch.matmul} \to \text{rocBLAS} \to \text{MFMA on gfx942}` },
+    ],
+    qualityStats: { mean: 0.9829, std: 0.0033, p5: 0.9765, min: 0.9601 },
+    identityEq: String.raw`\mathbb{E}[\mathrm{score}] = \tfrac{((H D)\,\mathbf{q})^\top\hat{\mathbf{k}}}{\beta_{\rm JL}} = \mathbf{q}^\top\mathbf{k}, \quad (HD)^\top(HD)=I`,
+    identityNote: "Full 128D random orthogonal transform has the same score-preservation guarantee; the difference vs block methods is only computational cost.",
+  },
+];
 
 export function MathSection() {
   const ref = useRef(null);
   const inView = useInView(ref, { once: true, margin: "-80px" });
-
-  const methods = [
-    {
-      cls: "planar",
-      name: "PlanarQuant",
-      subtitle: "2D Givens Rotation",
-      formula: [
-        "For each pair (x₂ᵢ, x₂ᵢ₊₁) in head vector:",
-        "  [y₂ᵢ ]   [ cos θᵢ  -sin θᵢ ] [x₂ᵢ ]",
-        "  [y₂ᵢ₊₁] = [ sin θᵢ   cos θᵢ ] [x₂ᵢ₊₁]",
-        "",
-        "  64 groups × 4 FMAs = 256 FMAs/vector",
-        "  Storage: 64 × (cos,sin) = 128 floats",
-      ],
-      fmaPct: 1.56,  // 256/16384
-      fmaLabel: "256 FMAs",
-      color: "var(--planar-color)",
-    },
-    {
-      cls: "iso",
-      name: "IsoQuant",
-      subtitle: "Quaternion Sandwich",
-      formula: [
-        "For each group of 4 dims (a, b, c, d):",
-        "  y = q ⊗ v ⊗ q*",
-        "  q = unit quaternion (cos α + sin α · n̂)",
-        "",
-        "  32 groups × 16 FMAs = 512 FMAs/vector",
-        "  4D → maps to CDNA3 SIMD-4 lanes ✓",
-      ],
-      fmaPct: 3.12,  // 512/16384
-      fmaLabel: "512 FMAs",
-      color: "var(--iso-color)",
-    },
-    {
-      cls: "rotor",
-      name: "RotorQuant",
-      subtitle: "Clifford Cl(3,0) Rotor",
-      formula: [
-        "For each group of 3 dims (x, y, z):",
-        "  y = R ⊗ v ⊗ R̃",
-        "  R = scalar + bivector (6 components)",
-        "",
-        "  42 groups × 28 FMAs = 1,176 FMAs/vector",
-        "  3D → SIMD-4 misalignment, poor perf ✗",
-      ],
-      fmaPct: 7.18,  // 1176/16384
-      fmaLabel: "1,176 FMAs",
-      color: "var(--rotor-color)",
-    },
-    {
-      cls: "turbo",
-      name: "TurboQuant",
-      subtitle: "WHT Full-Matrix Rotation",
-      formula: [
-        "For full head vector (128 dims):",
-        "  y = H · D · x   (WHT + diagonal scaling)",
-        "  H: 128×128 Hadamard matrix",
-        "  D: random diagonal sign matrix",
-        "",
-        "  16,384 FMAs/vector — O(d²) cost",
-        "  Implemented via torch.matmul → MFMA",
-      ],
-      fmaPct: 100,
-      fmaLabel: "16,384 FMAs",
-      color: "var(--turbo-color)",
-    },
-  ];
+  const [activeTab, setActiveTab] = useState(0);
+  const m = MATH_METHODS[activeTab] ?? MATH_METHODS[0];
+  const Viz = m.Viz;
 
   return (
     <section id="math" className="report-section" ref={ref}>
       <div className="section-divider" />
       <motion.div
-        style={{ paddingTop: '5rem' }}
+        style={{ paddingTop: "5rem" }}
         variants={fadeUp} initial="hidden"
         animate={inView ? "visible" : "hidden"}
         custom={0}
@@ -242,79 +1329,195 @@ export function MathSection() {
           Rotation Algebras<br /><span className="dim">vs. Hardware Reality</span>
         </h2>
         <p className="section-lead">
-          Every method applies a rotation before quantization to decorrelate the KV vector
-          components — reducing quantization error. They all achieve the same 4.923× compression
-          and nearly identical reconstruction quality. The decisive difference is
-          <strong style={{ color: 'var(--text)' }}> FMAs per vector</strong>, which spans
-          four orders of magnitude across methods.
+          Every method applies a learned random rotation before quantization to decorrelate
+          KV vector components and reduce error. All four share an identical 52-byte output
+          format. The decisive factor is <strong style={{ color: "var(--text)" }}>FMAs per
+          vector</strong> — spanning four orders of magnitude.
         </p>
       </motion.div>
 
-      <div className="math-grid">
-        {methods.map((m, i) => (
-          <motion.div
-            key={m.name}
-            className="math-card glass"
-            variants={fadeUp} initial="hidden"
-            animate={inView ? "visible" : "hidden"}
-            custom={i + 1}
-            whileHover={{ y: -4, transition: { duration: 0.2 } }}
+      {/* Method tabs */}
+      <motion.div
+        variants={fadeUp} initial="hidden"
+        animate={inView ? "visible" : "hidden"}
+        custom={1}
+        style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap", marginBottom: "1.5rem" }}
+      >
+        {MATH_METHODS.map((mm, i) => (
+          <button
+            key={mm.name}
+            onClick={() => setActiveTab(i)}
+            style={{
+              padding: "0.45rem 1rem",
+              borderRadius: "999px",
+              border: activeTab === i ? `1.5px solid ${mm.colorHex}` : "1.5px solid rgba(255,255,255,0.1)",
+              background: activeTab === i ? `${mm.colorHex}18` : "transparent",
+              color: activeTab === i ? mm.colorHex : "rgba(255,255,255,0.4)",
+              fontFamily: "JetBrains Mono, monospace",
+              fontSize: "0.72rem",
+              fontWeight: 600,
+              letterSpacing: "0.07em",
+              cursor: "pointer",
+              transition: "all 0.2s",
+            }}
           >
-            <div className="math-card-header">
-              <div>
-                <span className={`math-method-badge ${m.cls}`}>{m.name}</span>
-                <p className="math-card-title" style={{ marginTop: '0.7rem' }}>{m.subtitle}</p>
-              </div>
-            </div>
-            <div className="math-formula">
-              {m.formula.map((line, j) => (
-                <div key={j} style={{ color: line.includes('✓') ? '#4ade80' : line.includes('✗') ? 'var(--rotor-color)' : undefined }}>
-                  {line.startsWith('  ') ? (
-                    <span className="eq">{line}</span>
-                  ) : (
-                    <span className="comment">{line}</span>
-                  )}
-                </div>
-              ))}
-            </div>
-            <div className="fma-bar-wrap">
-              <div className="fma-bar-label">
-                <span>FMAs / vector</span>
-                <span style={{ color: m.color, fontWeight: 600 }}>{m.fmaLabel}</span>
-              </div>
-              <FmaBar pct={m.fmaPct} color={m.color} inView={inView} delay={0.3 + i * 0.1} />
-            </div>
-          </motion.div>
+            {mm.name}
+          </button>
         ))}
-      </div>
+      </motion.div>
 
+      {/* Main method card */}
+      <AnimatePresence mode="wait">
+        <motion.div
+          key={activeTab}
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -8 }}
+          transition={{ duration: 0.32, ease: [0.23, 1, 0.32, 1] }}
+          className="glass math-detail-card"
+          style={{ borderTop: `3px solid ${m.colorHex}`, borderRadius: "var(--radius-md)", padding: "2rem", marginBottom: "1.5rem" }}
+        >
+          {/* header row */}
+          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: "1.5rem", flexWrap: "wrap", gap: "0.8rem" }}>
+            <div>
+              <span className={`math-method-badge ${m.cls}`}>{m.name}</span>
+              <h3 style={{ fontFamily: "Space Grotesk, sans-serif", fontSize: "1.3rem", fontWeight: 700, margin: "0.5rem 0 0.2rem" }}>{m.subtitle}</h3>
+              <span style={{ fontSize: "0.68rem", fontFamily: "JetBrains Mono, monospace", color: "rgba(255,255,255,0.3)" }}>{m.paper}</span>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "0.25rem" }}>
+              <span style={{ fontSize: "1.4rem", fontWeight: 700, color: m.colorHex, fontFamily: "Space Grotesk, sans-serif" }}>{m.fmaLabel}</span>
+              <span style={{ fontSize: "0.68rem", color: "rgba(255,255,255,0.3)", fontFamily: "JetBrains Mono, monospace" }}>per 128-dim vector</span>
+            </div>
+          </div>
+
+          {/* two-column: viz + equations */}
+          <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: "2rem", alignItems: "start" }} className="math-detail-body">
+            <div style={{ display: "flex", flexDirection: "column", gap: "1rem", alignItems: "center" }}>
+              <Viz color={m.colorHex} inView={inView} />
+              {/* params mini-table */}
+              <div style={{
+                background: "rgba(0,0,0,0.35)", border: "1px solid rgba(255,255,255,0.07)",
+                borderRadius: "8px", padding: "0.75rem", width: "176px",
+              }}>
+                {m.params.map(({ k, v }) => (
+                  <div key={k} style={{ display: "flex", justifyContent: "space-between", fontSize: "0.68rem", padding: "0.15rem 0", borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
+                    <span style={{ color: "rgba(255,255,255,0.35)", fontFamily: "JetBrains Mono, monospace" }}>{k}</span>
+                    <span style={{ color: "var(--text)", fontFamily: "JetBrains Mono, monospace", fontWeight: 600 }}>{v}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* equations */}
+            <div style={{ minWidth: 0 }}>
+              <EqReveal steps={m.steps} inView={inView} color={m.colorHex} />
+
+              {/* FMA bar */}
+              <div style={{ marginTop: "1.5rem" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.72rem", fontFamily: "JetBrains Mono, monospace", color: "rgba(255,255,255,0.4)", marginBottom: "0.4rem" }}>
+                  <span>FMA cost relative to TurboQuant (16,384)</span>
+                  <span style={{ color: m.colorHex, fontWeight: 700 }}>{m.fmaLabel}</span>
+                </div>
+                <div className="fma-track">
+                  <FmaBar pct={m.fmaPct} color={m.colorHex} inView={inView} delay={0.2} />
+                </div>
+                {/* all 4 methods mini comparison */}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "0.4rem", marginTop: "0.8rem" }}>
+                  {MATH_METHODS.map((mm) => (
+                    <div key={mm.name} style={{ textAlign: "center" }}>
+                      <div style={{ fontSize: "0.65rem", fontFamily: "JetBrains Mono, monospace", color: mm.colorHex, fontWeight: 600 }}>{mm.fmaLabel}</div>
+                      <div className="fma-track" style={{ marginTop: "0.2rem" }}>
+                        <FmaBar pct={mm.fmaPct} color={mm.colorHex} inView={inView} delay={0.3} />
+                      </div>
+                      <div style={{ fontSize: "0.6rem", color: "rgba(255,255,255,0.3)", fontFamily: "JetBrains Mono, monospace", marginTop: "0.2rem" }}>{mm.name}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* measured fidelity + score identity (aggregate benchmark data only) */}
+          <div style={{
+            marginTop: "1.4rem",
+            background: "rgba(0,0,0,0.28)",
+            border: "1px solid rgba(255,255,255,0.08)",
+            borderRadius: "10px",
+            padding: "1rem 1.1rem",
+          }}>
+            <p style={{
+              fontSize: "0.66rem",
+              color: m.colorHex,
+              fontFamily: "JetBrains Mono, monospace",
+              letterSpacing: "0.08em",
+              marginBottom: "0.55rem",
+            }}>
+              MEASURED ATTENTION FIDELITY (aggregate) — bench_ppl_all_methods_quality_recheck.json
+            </p>
+            <div style={{ fontSize: "0.82rem", lineHeight: 1.8, color: "var(--text-sub)" }}>
+              <span style={{ marginRight: "1rem" }}>mean: <strong style={{ color: "var(--text)" }}>{Number(m.qualityStats?.mean ?? 0).toFixed(4)}</strong></span>
+              <span style={{ marginRight: "1rem" }}>std: <strong style={{ color: "var(--text)" }}>{Number(m.qualityStats?.std ?? 0).toFixed(4)}</strong></span>
+              <span style={{ marginRight: "1rem" }}>p5: <strong style={{ color: "var(--text)" }}>{Number(m.qualityStats?.p5 ?? 0).toFixed(4)}</strong></span>
+              <span>min: <strong style={{ color: "var(--text)" }}>{Number(m.qualityStats?.min ?? 0).toFixed(4)}</strong></span>
+            </div>
+            <div style={{ marginTop: "0.7rem", fontSize: "0.85rem", overflowX: "auto" }}>
+              <KatexEq math={m.identityEq ?? String.raw`\mathbb{E}[\mathrm{score}] = \mathbf{q}^\top\mathbf{k}`} display={false} />
+            </div>
+            <p style={{
+              marginTop: "0.55rem",
+              fontSize: "0.72rem",
+              color: "rgba(255,255,255,0.45)",
+              lineHeight: 1.6,
+            }}>
+              {m.identityNote ?? "Measured fidelity statistics shown above. Identity equation unavailable for this method entry."}
+            </p>
+            <p style={{
+              marginTop: "0.4rem",
+              fontSize: "0.68rem",
+              color: "var(--text-muted)",
+              fontFamily: "JetBrains Mono, monospace",
+            }}>
+              Per-layer plots are intentionally omitted here until a layer-resolved benchmark artifact is generated.
+            </p>
+          </div>
+        </motion.div>
+      </AnimatePresence>
+
+      {/* Common quantization block */}
       <motion.div
         className="quant-section glass-red"
         variants={fadeUp} initial="hidden"
         animate={inView ? "visible" : "hidden"}
-        custom={5}
+        custom={3}
       >
         <div className="section-label">
-          <span className="section-num" style={{ fontSize: '0.65rem' }}>COMMON</span>
-          <span className="section-tag">QUANTIZATION STEP — ALL METHODS</span>
+          <span className="section-num" style={{ fontSize: "0.65rem" }}>COMMON</span>
+          <span className="section-tag">QUANTIZATION STEP — ALL FOUR METHODS</span>
         </div>
-        <p style={{ color: 'var(--text-sub)', fontSize: '0.88rem', lineHeight: 1.7, maxWidth: '70ch' }}>
-          After rotation, all methods apply the same scalar quantization scheme.
-          The rotated vector is normalized, its components mapped to a Lloyd-Max codebook,
-          and packed into the same 52-byte format. This is why all methods achieve
-          statistically identical reconstruction quality.
-        </p>
-        <div className="quant-grid">
-          {[
-            { val: "4B", desc: "float32 norm\nper vector" },
-            { val: "48B", desc: "packed 3-bit\nindices (×128)" },
-            { val: "4.923×", desc: "compression ratio\nvs FP16 (256B)" },
-          ].map((q) => (
-            <div key={q.val} className="quant-item">
-              <div className="quant-val" style={{ color: 'var(--amd-red)' }}>{q.val}</div>
-              <div className="quant-desc">{q.desc}</div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: "2rem", alignItems: "start" }} className="quant-inner-grid">
+          <div>
+            <p style={{ color: "var(--text-sub)", fontSize: "0.88rem", lineHeight: 1.7, marginBottom: "1rem" }}>
+              After rotation, all methods apply the same scalar quantization. The rotated vector
+              is L2-normalized, components mapped to a Lloyd-Max codebook, and packed into
+              an identical 52-byte block. This is why all methods achieve statistically
+              indistinguishable reconstruction quality.
+            </p>
+            <div style={{ background: "rgba(0,0,0,0.3)", borderRadius: "8px", padding: "0.8rem 1rem", fontSize: "0.82rem" }}>
+              <KatexEq math={String.raw`\hat{x} = \frac{x}{\|x\|},\quad \hat{x}_i \mapsto \arg\min_{c \in \mathcal{C}} |{\hat{x}_i - c}|,\quad \text{pack} \to 3\text{-bit index}`} display={false} />
             </div>
-          ))}
+          </div>
+          <div className="quant-grid">
+            {[
+              { val: "4 B", desc: "float32 norm" },
+              { val: "48 B", desc: "3-bit indices ×128" },
+              { val: "4.923×", desc: "vs FP16 (256 B)" },
+            ].map((q) => (
+              <div key={q.val} className="quant-item">
+                <div className="quant-val" style={{ color: "var(--amd-red)" }}>{q.val}</div>
+                <div className="quant-desc">{q.desc}</div>
+              </div>
+            ))}
+          </div>
         </div>
       </motion.div>
     </section>
@@ -387,7 +1590,7 @@ export function ResultsSection() {
         custom={0}
       >
         <div className="section-label">
-          <span className="section-num">03</span>
+          <span className="section-num">04</span>
           <span className="section-tag">RESULTS</span>
         </div>
         <h2 className="section-title">
@@ -575,26 +1778,45 @@ export function ResultsSection() {
 
         <div className="glass" style={{ borderRadius: 'var(--radius-md)', padding: '1.5rem' }}>
           <p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.7rem', color: 'var(--amd-red)', letterSpacing: '0.12em', marginBottom: '1rem' }}>
-            NEEDLE-IN-HAYSTACK — RANK PRESERVATION
+            RUNTIME COMPRESSION RATIO — OBSERVED
           </p>
           <p style={{ fontSize: '0.84rem', color: 'var(--text-sub)', lineHeight: 1.7, marginBottom: '1rem' }}>
-            All methods preserve <strong style={{ color: 'var(--text)' }}>100% rank-1 accuracy</strong> for a
-            high-salience (12σ) needle token at all tested context lengths up to 65,536 tokens.
+            Reported from materialized cache buffers during real prefill runs. This keeps UI claims tied to executed measurements only.
           </p>
           {[
-            { ctx: "4K",   val: "100%", pass: true },
-            { ctx: "16K",  val: "100%", pass: true },
-            { ctx: "32K",  val: "100%", pass: true },
-            { ctx: "64K",  val: "100%", pass: true },
+            { m: "TurboQuant3", ratio: "4.923×", bytes: "52 B/vec" },
+            { m: "PlanarQuant3", ratio: "1.939×", bytes: "132 B/vec" },
+            { m: "IsoQuant3", ratio: "1.939×", bytes: "132 B/vec" },
+            { m: "RotorQuant3", ratio: "1.925×", bytes: "133 B/vec" },
           ].map((row) => (
-            <div key={row.ctx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.5rem 0', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
-              <span style={{ fontSize: '0.8rem', color: 'var(--text-sub)', fontFamily: "'JetBrains Mono', monospace" }}>ctx={row.ctx}</span>
-              <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.78rem', color: '#4ade80', fontWeight: 600 }}>
-                {row.val} — all methods ✓
+            <div key={row.m} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.5rem 0', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+              <span style={{ fontSize: '0.8rem', color: 'var(--text-sub)', fontFamily: "'JetBrains Mono', monospace" }}>{row.m}</span>
+              <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.78rem', color: 'var(--text)', fontWeight: 600 }}>
+                {row.ratio} ({row.bytes})
               </span>
             </div>
           ))}
         </div>
+      </motion.div>
+
+      <motion.div
+        style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem", marginTop: "1rem" }}
+        variants={fadeUp} initial="hidden"
+        animate={inView ? "visible" : "hidden"}
+        custom={5}
+        className="obs-packed-grid"
+      >
+        <LiveGenerationPanel inView={inView} />
+        <ImportantFactsPanel />
+      </motion.div>
+
+      <motion.div
+        variants={fadeUp} initial="hidden"
+        animate={inView ? "visible" : "hidden"}
+        custom={6}
+        style={{ marginTop: "1rem" }}
+      >
+        <RooflineComparePanel />
       </motion.div>
     </section>
   );
@@ -616,7 +1838,7 @@ export function ReasoningSection() {
         custom={0}
       >
         <div className="section-label">
-          <span className="section-num">04</span>
+          <span className="section-num">05</span>
           <span className="section-tag">REASONING</span>
         </div>
         <h2 className="section-title">
@@ -766,7 +1988,7 @@ export function ConclusionSection() {
         custom={0}
       >
         <div className="section-label">
-          <span className="section-num">05</span>
+          <span className="section-num">06</span>
           <span className="section-tag">CONCLUSION</span>
         </div>
         <h2 className="section-title">

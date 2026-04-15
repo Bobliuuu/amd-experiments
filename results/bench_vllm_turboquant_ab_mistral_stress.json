@@ -1,0 +1,30 @@
+{
+  "model": "mistralai/Mistral-7B-v0.1",
+  "input_len": 512,
+  "output_len": 128,
+  "num_prompts": 20,
+  "device": "AMD Instinct MI300X VF",
+  "results": [
+    {
+      "backend": "fp16",
+      "elapsed_s": 1.269,
+      "throughput_output_tps": 2017.3,
+      "vram_peak_gb": 0.0,
+      "engine_load_s": 19.64
+    },
+    {
+      "backend": "turboquant_decompress",
+      "elapsed_s": 1.27,
+      "throughput_output_tps": 2015.7,
+      "vram_peak_gb": 0.0,
+      "engine_load_s": 18.86
+    },
+    {
+      "backend": "turboquant_fused",
+      "elapsed_s": 1.268,
+      "throughput_output_tps": 2018.2,
+      "vram_peak_gb": 0.0,
+      "engine_load_s": 18.84
+    }
+  ]
+}

@@ -1,0 +1,65 @@
+{
+  "model": "mistralai/Mistral-7B-v0.1",
+  "device": "AMD Instinct MI300X VF",
+  "seq_len": 512,
+  "batch_size": 1,
+  "bits": 3,
+  "results": [
+    {
+      "method": "turbo",
+      "bits": 3,
+      "label": "turbo3",
+      "seq_len": 512,
+      "batch_size": 1,
+      "cache_layers": 32,
+      "cache_kv_heads": 8,
+      "cache_head_dim": 128,
+      "compress_ms": 76.508,
+      "kv_bytes_fp16": 67108864,
+      "kv_bytes_compressed_measured": 13631488,
+      "compression_ratio_measured": 4.923076923076923
+    },
+    {
+      "method": "planar",
+      "bits": 3,
+      "label": "planar3",
+      "seq_len": 512,
+      "batch_size": 1,
+      "cache_layers": 32,
+      "cache_kv_heads": 8,
+      "cache_head_dim": 128,
+      "compress_ms": 412.916,
+      "kv_bytes_fp16": 67108864,
+      "kv_bytes_compressed_measured": 34603008,
+      "compression_ratio_measured": 1.9393939393939394
+    },
+    {
+      "method": "iso",
+      "bits": 3,
+      "label": "iso3",
+      "seq_len": 512,
+      "batch_size": 1,
+      "cache_layers": 32,
+      "cache_kv_heads": 8,
+      "cache_head_dim": 128,
+      "compress_ms": 11.278,
+      "kv_bytes_fp16": 67108864,
+      "kv_bytes_compressed_measured": 34603008,
+      "compression_ratio_measured": 1.9393939393939394
+    },
+    {
+      "method": "rotor",
+      "bits": 3,
+      "label": "rotor3",
+      "seq_len": 512,
+      "batch_size": 1,
+      "cache_layers": 32,
+      "cache_kv_heads": 8,
+      "cache_head_dim": 128,
+      "compress_ms": 11.512,
+      "kv_bytes_fp16": 67108864,
+      "kv_bytes_compressed_measured": 34865152,
+      "compression_ratio_measured": 1.9248120300751879
+    }
+  ]
+}

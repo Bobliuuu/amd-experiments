@@ -1,0 +1,465 @@
+{
+  "generated_at": "2026-04-14T15:08:16.534829+00:00",
+  "results_dir": "/root/workspace/amd-experiments/results",
+  "files": {
+    "bench_compress_decompress_recheck.json": {
+      "path": "/root/workspace/amd-experiments/results/bench_compress_decompress_recheck.json",
+      "present": true
+    },
+    "bench_ppl_all_methods_quality_recheck.json": {
+      "path": "/root/workspace/amd-experiments/results/bench_ppl_all_methods_quality_recheck.json",
+      "present": true
+    },
+    "rocprof_kernel_timeline.json": {
+      "path": "/root/workspace/amd-experiments/results/rocprof_kernel_timeline.json",
+      "present": true
+    },
+    "bench_mfma_rotate.json": {
+      "path": "/root/workspace/amd-experiments/results/bench_mfma_rotate.json",
+      "present": true
+    },
+    "pope_rotorquant_2026_claims.json": {
+      "path": "/root/workspace/amd-experiments/results/pope_rotorquant_2026_claims.json",
+      "present": true
+    },
+    "bench_runtime_ratio_all_methods.json": {
+      "path": "/root/workspace/amd-experiments/results/bench_runtime_ratio_all_methods.json",
+      "present": true
+    },
+    "bench_empirical_kv_validation.json": {
+      "path": "/root/workspace/amd-experiments/results/bench_empirical_kv_validation.json",
+      "present": true
+    }
+  },
+  "summary": {
+    "compress_decompress": [
+      {
+        "method": "planar",
+        "bits": 3,
+        "n_vectors": 4096,
+        "head_dim": 128,
+        "compress_us": 66.32899749092758,
+        "decompress_us": 34.96349381748587,
+        "compress_bw_gbs": 19.019856287931326,
+        "decompress_bw_gbs": 36.08243519899797,
+        "fp16_bytes_in": 1048576,
+        "compressed_bytes": 212992,
+        "compression_ratio": 4.923076923076923,
+        "fmas_per_vec": 256
+      },
+      {
+        "method": "iso",
+        "bits": 3,
+        "n_vectors": 4096,
+        "head_dim": 128,
+        "compress_us": 58.15100303152576,
+        "decompress_us": 35.55250441422686,
+        "compress_bw_gbs": 21.694690275867785,
+        "decompress_bw_gbs": 35.48464505626121,
+        "fp16_bytes_in": 1048576,
+        "compressed_bytes": 212992,
+        "compression_ratio": 4.923076923076923,
+        "fmas_per_vec": 512
+      },
+      {
+        "method": "rotor",
+        "bits": 3,
+        "n_vectors": 4096,
+        "head_dim": 128,
+        "compress_us": 74.514995503705,
+        "decompress_us": 35.808006941806525,
+        "compress_bw_gbs": 16.93039087598513,
+        "decompress_bw_gbs": 35.231449827694696,
+        "fp16_bytes_in": 1048576,
+        "compressed_bytes": 212992,
+        "compression_ratio": 4.923076923076923,
+        "fmas_per_vec": 1176
+      },
+      {
+        "method": "turbo",
+        "bits": 3,
+        "n_vectors": 4096,
+        "head_dim": 128,
+        "compress_us": 452.61250488692895,
+        "decompress_us": 303.52448811754584,
+        "compress_bw_gbs": 2.7873025742299435,
+        "decompress_bw_gbs": 4.1563961043941635,
+        "fp16_bytes_in": 1048576,
+        "compressed_bytes": 212992,
+        "compression_ratio": 4.923076923076923,
+        "fmas_per_vec": 16384
+      }
+    ],
+    "kv_cosine_quality": [
+      {
+        "method": "planar",
+        "bits": 3,
+        "cosine_sim_mean": 0.9829403758049011,
+        "cosine_sim_std": 0.0030535703990608454,
+        "cosine_sim_min": 0.9669276475906372,
+        "cosine_sim_p5": 0.977118968963623,
+        "mse": 0.03422579914331436
+      },
+      {
+        "method": "iso",
+        "bits": 3,
+        "cosine_sim_mean": 0.9830920696258545,
+        "cosine_sim_std": 0.003167778020724654,
+        "cosine_sim_min": 0.9616600871086121,
+        "cosine_sim_p5": 0.977310299873352,
+        "mse": 0.033797487616539
+      },
+      {
+        "method": "rotor",
+        "bits": 3,
+        "cosine_sim_mean": 0.9830259084701538,
+        "cosine_sim_std": 0.0031843483448028564,
+        "cosine_sim_min": 0.9649244546890259,
+        "cosine_sim_p5": 0.9771510362625122,
+        "mse": 0.03408385440707207
+      },
+      {
+        "method": "turbo",
+        "bits": 3,
+        "cosine_sim_mean": 0.9829344749450684,
+        "cosine_sim_std": 0.003285776823759079,
+        "cosine_sim_min": 0.960132896900177,
+        "cosine_sim_p5": 0.9764842987060547,
+        "mse": 0.034275297075510025
+      }
+    ],
+    "rocprof_kernel_timeline": {
+      "tqm_quantize_kernel_tq3(float const*, float const*, block_tq3_mi300x*, int)": {
+        "count": 54,
+        "avg_us": 3121.67,
+        "total_ms": 168.57,
+        "vgpr": 128,
+        "accum_vgpr": 0,
+        "sgpr": 32
+      },
+      "tqm_quantize_kernel_tq4(float const*, float const*, block_tq4_mi300x*, int)": {
+        "count": 54,
+        "avg_us": 3148.15,
+        "total_ms": 170.0,
+        "vgpr": 128,
+        "accum_vgpr": 0,
+        "sgpr": 32
+      },
+      "tqm_dequantize_kernel_tq3(block_tq3_mi300x const*, float const*, float*, int)": {
+        "count": 53,
+        "avg_us": 170.55,
+        "total_ms": 9.039,
+        "vgpr": 76,
+        "accum_vgpr": 4,
+        "sgpr": 16
+      },
+      "tqm_dequantize_kernel_tq4(block_tq4_mi300x const*, float const*, float*, int)": {
+        "count": 53,
+        "avg_us": 176.35,
+        "total_ms": 9.346,
+        "vgpr": 76,
+        "accum_vgpr": 4,
+        "sgpr": 16
+      },
+      "tqm_fused_dot_kernel_tq3(float const*, block_tq3_mi300x const*, float*, int, int)": {
+        "count": 53,
+        "avg_us": 38.8,
+        "total_ms": 2.056,
+        "vgpr": 12,
+        "accum_vgpr": 4,
+        "sgpr": 32
+      }
+    },
+    "mfma_rotate": {
+      "gpu": "AMD Instinct MI300X VF",
+      "mfma_active": true,
+      "correctness": {
+        "fwd_cos_sim": 1.0,
+        "fwd_max_err": 0.001699,
+        "inv_cos_sim": 1.0,
+        "rt_cos_sim": 1.0,
+        "pass": true
+      },
+      "throughput": [
+        {
+          "n": 256,
+          "mfma_us": 33.28,
+          "matmul_us": 28.68,
+          "speedup": 0.862,
+          "mfma_gbs": 9.8,
+          "matmul_gbs": 11.4
+        },
+        {
+          "n": 512,
+          "mfma_us": 32.95,
+          "matmul_us": 28.65,
+          "speedup": 0.869,
+          "mfma_gbs": 17.9,
+          "matmul_gbs": 20.6
+        },
+        {
+          "n": 1024,
+          "mfma_us": 32.99,
+          "matmul_us": 28.67,
+          "speedup": 0.869,
+          "mfma_gbs": 33.8,
+          "matmul_gbs": 38.9
+        },
+        {
+          "n": 2048,
+          "mfma_us": 33.96,
+          "matmul_us": 30.5,
+          "speedup": 0.898,
+          "mfma_gbs": 63.7,
+          "matmul_gbs": 70.9
+        },
+        {
+          "n": 4096,
+          "mfma_us": 33.38,
+          "matmul_us": 28.94,
+          "speedup": 0.867,
+          "mfma_gbs": 127.6,
+          "matmul_gbs": 147.2
+        },
+        {
+          "n": 8192,
+          "mfma_us": 33.79,
+          "matmul_us": 35.25,
+          "speedup": 1.043,
+          "mfma_gbs": 250.2,
+          "matmul_gbs": 239.9
+        },
+        {
+          "n": 16384,
+          "mfma_us": 38.61,
+          "matmul_us": 43.7,
+          "speedup": 1.132,
+          "mfma_gbs": 436.3,
+          "matmul_gbs": 385.4
+        },
+        {
+          "n": 32768,
+          "mfma_us": 46.9,
+          "matmul_us": 45.04,
+          "speedup": 0.96,
+          "mfma_gbs": 716.8,
+          "matmul_gbs": 746.4
+        },
+        {
+          "n": 65536,
+          "mfma_us": 84.22,
+          "matmul_us": 65.76,
+          "speedup": 0.781,
+          "mfma_gbs": 797.6,
+          "matmul_gbs": 1021.5
+        }
+      ],
+      "e2e_tq3": [
+        {
+          "n": 1024,
+          "mfma_us": 32.92,
+          "matmul_us": 28.62,
+          "speedup": 0.869
+        },
+        {
+          "n": 4096,
+          "mfma_us": 33.35,
+          "matmul_us": 28.91,
+          "speedup": 0.867
+        },
+        {
+          "n": 16384,
+          "mfma_us": 38.58,
+          "matmul_us": 43.24,
+          "speedup": 1.121
+        }
+      ]
+    },
+    "pope_author_claims": {
+      "_source": "Author-reported RotorQuant headline metrics (Pope, March 2026). Primary write-up: https://www.scrya.com/rotorquant \u2014 code: https://github.com/scrya-com/rotorquant",
+      "cuda_speedup_min": 10,
+      "cuda_speedup_max": 19,
+      "metal_speedup_min": 9,
+      "metal_speedup_max": 31,
+      "params_rotor": 372,
+      "params_dxd_matmul": 16399,
+      "param_reduction_x": 44,
+      "attention_fidelity_pct": 99.0,
+      "fidelity_model": "Qwen2.5-3B",
+      "fidelity_metric": "Cosine similarity vs FP attention"
+    },
+    "runtime_ratio_all_methods": {
+      "model": "mistralai/Mistral-7B-v0.1",
+      "device": "AMD Instinct MI300X VF",
+      "seq_len": 2048,
+      "batch_size": 1,
+      "bits": 3,
+      "results": [
+        {
+          "method": "turbo",
+          "bits": 3,
+          "seq_len": 2048,
+          "batch_size": 1,
+          "cache_layers": 32,
+          "cache_kv_heads": 8,
+          "cache_head_dim": 128,
+          "kv_bytes_fp16": 268435456,
+          "kv_bytes_compressed_materialized": 54525952,
+          "ratio_calculated_layout": 4.923077,
+          "ratio_observed_runtime": 4.923077,
+          "fp16_bytes_per_vector": 256
+        },
+        {
+          "method": "planar",
+          "bits": 3,
+          "seq_len": 2048,
+          "batch_size": 1,
+          "cache_layers": 32,
+          "cache_kv_heads": 8,
+          "cache_head_dim": 128,
+          "kv_bytes_fp16": 268435456,
+          "kv_bytes_compressed_materialized": 138412032,
+          "ratio_calculated_layout": 4.923077,
+          "ratio_observed_runtime": 1.939394,
+          "fp16_bytes_per_vector": 256
+        },
+        {
+          "method": "iso",
+          "bits": 3,
+          "seq_len": 2048,
+          "batch_size": 1,
+          "cache_layers": 32,
+          "cache_kv_heads": 8,
+          "cache_head_dim": 128,
+          "kv_bytes_fp16": 268435456,
+          "kv_bytes_compressed_materialized": 138412032,
+          "ratio_calculated_layout": 4.923077,
+          "ratio_observed_runtime": 1.939394,
+          "fp16_bytes_per_vector": 256
+        },
+        {
+          "method": "rotor",
+          "bits": 3,
+          "seq_len": 2048,
+          "batch_size": 1,
+          "cache_layers": 32,
+          "cache_kv_heads": 8,
+          "cache_head_dim": 128,
+          "kv_bytes_fp16": 268435456,
+          "kv_bytes_compressed_materialized": 139460608,
+          "ratio_calculated_layout": 4.923077,
+          "ratio_observed_runtime": 1.924812,
+          "fp16_bytes_per_vector": 256
+        }
+      ]
+    },
+    "empirical_kv_validation": {
+      "model": "mistralai/Mistral-7B-v0.1",
+      "device": "AMD Instinct MI300X VF",
+      "bits": 3,
+      "sources": {
+        "ratio": "/root/workspace/amd-experiments/results/bench_runtime_ratio_all_methods.json",
+        "speed": "/root/workspace/amd-experiments/results/bench_compress_decompress_recheck.json",
+        "quality": "/root/workspace/amd-experiments/results/bench_ppl_all_methods_quality_recheck.json"
+      },
+      "results": [
+        {
+          "method": "turbo",
+          "bits": 3,
+          "seq_len": 2048,
+          "batch_size": 1,
+          "cache_layers": 32,
+          "cache_kv_heads": 8,
+          "cache_head_dim": 128,
+          "kv_bytes_fp16": 268435456,
+          "kv_bytes_compressed_materialized": 54525952,
+          "ratio_calculated_layout": 4.923077,
+          "ratio_observed_runtime": 4.923077,
+          "fp16_bytes_per_vector": 256,
+          "compress_bw_gbs": 2.7873025742299435,
+          "decompress_bw_gbs": 4.1563961043941635,
+          "compress_us": 452.61250488692895,
+          "decompress_us": 303.52448811754584,
+          "fmas_per_vec": 16384,
+          "compress_speedup_vs_turbo": 1.0,
+          "decompress_speedup_vs_turbo": 1.0,
+          "cosine_sim_mean": 0.9829344749450684,
+          "cosine_sim_p5": 0.9764842987060547,
+          "mse": 0.034275297075510025
+        },
+        {
+          "method": "planar",
+          "bits": 3,
+          "seq_len": 2048,
+          "batch_size": 1,
+          "cache_layers": 32,
+          "cache_kv_heads": 8,
+          "cache_head_dim": 128,
+          "kv_bytes_fp16": 268435456,
+          "kv_bytes_compressed_materialized": 138412032,
+          "ratio_calculated_layout": 4.923077,
+          "ratio_observed_runtime": 1.939394,
+          "fp16_bytes_per_vector": 256,
+          "compress_bw_gbs": 19.019856287931326,
+          "decompress_bw_gbs": 36.08243519899797,
+          "compress_us": 66.32899749092758,
+          "decompress_us": 34.96349381748587,
+          "fmas_per_vec": 256,
+          "compress_speedup_vs_turbo": 6.823750124503795,
+          "decompress_speedup_vs_turbo": 8.681182999101416,
+          "cosine_sim_mean": 0.9829403758049011,
+          "cosine_sim_p5": 0.977118968963623,
+          "mse": 0.03422579914331436
+        },
+        {
+          "method": "iso",
+          "bits": 3,
+          "seq_len": 2048,
+          "batch_size": 1,
+          "cache_layers": 32,
+          "cache_kv_heads": 8,
+          "cache_head_dim": 128,
+          "kv_bytes_fp16": 268435456,
+          "kv_bytes_compressed_materialized": 138412032,
+          "ratio_calculated_layout": 4.923077,
+          "ratio_observed_runtime": 1.939394,
+          "fp16_bytes_per_vector": 256,
+          "compress_bw_gbs": 21.694690275867785,
+          "decompress_bw_gbs": 35.48464505626121,
+          "compress_us": 58.15100303152576,
+          "decompress_us": 35.55250441422686,
+          "fmas_per_vec": 512,
+          "compress_speedup_vs_turbo": 7.783399791772316,
+          "decompress_speedup_vs_turbo": 8.537358847667733,
+          "cosine_sim_mean": 0.9830920696258545,
+          "cosine_sim_p5": 0.977310299873352,
+          "mse": 0.033797487616539
+        },
+        {
+          "method": "rotor",
+          "bits": 3,
+          "seq_len": 2048,
+          "batch_size": 1,
+          "cache_layers": 32,
+          "cache_kv_heads": 8,
+          "cache_head_dim": 128,
+          "kv_bytes_fp16": 268435456,
+          "kv_bytes_compressed_materialized": 139460608,
+          "ratio_calculated_layout": 4.923077,
+          "ratio_observed_runtime": 1.924812,
+          "fp16_bytes_per_vector": 256,
+          "compress_bw_gbs": 16.93039087598513,
+          "decompress_bw_gbs": 35.231449827694696,
+          "compress_us": 74.514995503705,
+          "decompress_us": 35.808006941806525,
+          "fmas_per_vec": 1176,
+          "compress_speedup_vs_turbo": 6.074113026879595,
+          "decompress_speedup_vs_turbo": 8.476441836341783,
+          "cosine_sim_mean": 0.9830259084701538,
+          "cosine_sim_p5": 0.9771510362625122,
+          "mse": 0.03408385440707207
+        }
+      ]
+    }
+  }
+}

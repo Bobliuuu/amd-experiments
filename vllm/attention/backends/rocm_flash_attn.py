@@ -53,8 +53,12 @@ TQ3_BLOCK_BYTES = 52          # 4 (norm) + 48 (3 bit-planes × 16 bytes)
 TQ3_PLANES_BYTES = 48         # bit-plane section only
 TQ3_HEAD_DIM = 128            # only head_dim=128 supported
 
-_USE_FUSED_KERNEL = os.environ.get("VLLM_TQ_USE_FUSED_KERNEL", "0") == "1"
 _ROTATION_SEED = int(os.environ.get("VLLM_TQ_ROTATION_SEED", "42"))
+
+
+def _use_fused_kernel() -> bool:
+    """Runtime A/B toggle so a single process can switch fused on/off."""
+    return os.environ.get("VLLM_TQ_USE_FUSED_KERNEL", "0") == "1"
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Lazy TurboQuant engine (one per process, shared across all attention layers)
@@ -608,7 +612,7 @@ class TurboQuantROCmAttentionImpl:
 
             out_p = self._forward_prefill(q_p, k_p, v_p, kv_cache, attn_metadata)
             out_d = (self._forward_decode_fused(q_d, kv_cache, decode_meta)
-                     if _USE_FUSED_KERNEL else
+                     if _use_fused_kernel() else
                      self._forward_decode_decompress(q_d, kv_cache, decode_meta))
 
             out = torch.cat([out_p, out_d], dim=0)
@@ -625,7 +629,7 @@ class TurboQuantROCmAttentionImpl:
                     self._tq(str(query.device)),
                 )
             out = (self._forward_decode_fused(q, kv_cache, attn_metadata)
-                   if _USE_FUSED_KERNEL else
+                   if _use_fused_kernel() else
                    self._forward_decode_decompress(q, kv_cache, attn_metadata))
 
         # Reshape back to vLLM's flat layout: (num_tokens, num_heads * head_size)

@@ -418,6 +418,69 @@ Actual packed (4-bit): 4 + ceil(128 × 4 / 8) = 4 + 64 = 68 bytes → 3.765×
 
 Note: Our current implementation stores indices as full int8 (1 byte each) rather than bit-packing to 3-bit. Full bit-packing would achieve the theoretical ratios but requires additional pack/unpack operations. The numbers above assume bit-packed storage.
 
+
+### Appendix A.1 Measured compression grid (screenshot-style experiment)
+
+We also run the screenshot-style experiment directly in this repo using:
+
+```bash
+python3 benchmarks/bench_compression_ratio_grid.py \
+  --bits 2 3 4 --ctx 2048 4096 8192 16384 \
+  --layers 28 --kv-heads 2 --head-dim 128
+```
+
+This benchmark computes sizes from **materialized compressed tensors** (`compress_tensor(...)` output), not from a formula-only table.
+
+| Bits | 2048 tokens | 4096 tokens | 8192 tokens | 16384 tokens |
+|---|---|---|---|---|
+| 2-bit | 4032 KB vs 28672 KB FP16 (7.11x) | 8064 KB vs 57344 KB FP16 (7.11x) | 16128 KB vs 114688 KB FP16 (7.11x) | 32256 KB vs 229376 KB FP16 (7.11x) |
+| 3-bit | 5824 KB vs 28672 KB FP16 (4.92x) | 11648 KB vs 57344 KB FP16 (4.92x) | 23296 KB vs 114688 KB FP16 (4.92x) | 46592 KB vs 229376 KB FP16 (4.92x) |
+| 4-bit | 7616 KB vs 28672 KB FP16 (3.76x) | 15232 KB vs 57344 KB FP16 (3.76x) | 30464 KB vs 114688 KB FP16 (3.76x) | 60928 KB vs 229376 KB FP16 (3.76x) |
+
+Saved JSON: `results/bench_compression_ratio_grid.json`.
+
+### Appendix A.2 TurboQuant showcase experiments (attention quality, latency, roofline, memory)
+
+To match the screenshot-style experiments (quality panel, latency table, roofline, memory scaling, and component breakdown), run:
+
+```bash
+python3 benchmarks/bench_turboquant_showcase.py \
+  --bits 3 --quality-seq-k 2048 \
+  --output results/bench_turboquant_showcase.json
+```
+
+Or run all showcase experiments with one command:
+
+```bash
+./scripts/run_showcase.sh
+```
+
+This script outputs:
+
+- Attention-quality text summary + histogram panel
+- `seq_k` latency table (`FP16 matmul`, `fused`, `fused+nb` proxy)
+- MI300X roofline-style chart with current vs target point
+- KV cache memory scaling curve
+- TQ3 component breakdown chart
+
+Artifacts:
+
+- JSON: `results/bench_turboquant_showcase.json`
+- Figures:
+  - `report/figures_v2/fig27_tq_attention_quality_hist.png`
+  - `report/figures_v2/fig28_mi300x_roofline_tq_attention.png`
+  - `report/figures_v2/fig29_kv_cache_memory_curve.png`
+  - `report/figures_v2/fig30_kv_component_breakdown.png`
+
+![TurboQuant attention quality histogram panel](figures_v2/fig27_tq_attention_quality_hist.png)
+
+![MI300X TurboQuant roofline-style chart](figures_v2/fig28_mi300x_roofline_tq_attention.png)
+
+![KV cache memory scaling curve](figures_v2/fig29_kv_cache_memory_curve.png)
+
+![TurboQuant 3-bit component breakdown](figures_v2/fig30_kv_component_breakdown.png)
+
+
 ## Appendix B: FMA Count Derivation
 
 **PlanarQuant** (2D Givens, head_dim=128):

@@ -148,13 +148,16 @@ class SDPAKVPatcher:
 
     _HEAD_DIM = 128
 
-    def __init__(self, scheme: str):
+    def __init__(self, scheme: str, use_fused_tq: bool = True):
         valid = {"fp16", "tq3", "tq3_k_only", "tq4_k_only"}
         if scheme not in valid:
             raise ValueError(f"Unknown scheme '{scheme}'. Valid: {valid}")
         self.scheme = scheme
+        self.use_fused_tq = use_fused_tq
         self._orig_sdpa = None
         self._tq = None
+        self._fused_tq_fn = None
+        self._fused_tq_pack = None
 
     def _load_tq(self, bits: int):
         from turboquant_mi300x import TurboQuantMI300X
@@ -165,6 +168,9 @@ class SDPAKVPatcher:
         scheme    = self.scheme
         tq        = self._tq
         head_dim  = self._HEAD_DIM
+        use_fused_tq = self.use_fused_tq
+        fused_tq_fn = self._fused_tq_fn
+        fused_tq_pack = self._fused_tq_pack
 
         def _tq_roundtrip(x: torch.Tensor) -> torch.Tensor:
             orig_shape = x.shape
@@ -182,7 +188,29 @@ class SDPAKVPatcher:
                     pass
 
                 elif scheme == "tq3":
-                    key   = _tq_roundtrip(key)
+                    can_use_fused = (
+                        use_fused_tq
+                        and fused_tq_fn is not None
+                        and fused_tq_pack is not None
+                        and attn_mask is None
+                        and query.ndim == 4
+                        and key.ndim == 4
+                        and value.ndim == 4
+                        and query.shape[-1] == key.shape[-1] == value.shape[-1] == head_dim
+                        and query.shape[1] == key.shape[1] == value.shape[1]
+                        and (dropout_p is None or float(dropout_p) == 0.0)
+                        and not bool(is_causal)
+                    )
+                    if can_use_fused:
+                        q_in = query if query.dtype == torch.float16 else query.to(torch.float16)
+                        q_rot = tq.rotate_queries(q_in.float()).to(torch.float16)
+                        k_planes, k_norms, v_planes, v_norms = fused_tq_pack(key, value, tq)
+                        sm_scale = scale if scale is not None else (head_dim ** -0.5)
+                        return fused_tq_fn(
+                            q_rot, k_planes, k_norms, v_planes, v_norms,
+                            rotation=tq.rotation, sm_scale=float(sm_scale),
+                        )
+                    key = _tq_roundtrip(key)
                     value = _tq_roundtrip(value)
 
                 elif scheme == "tq3_k_only":
@@ -204,6 +232,15 @@ class SDPAKVPatcher:
             self._tq = self._load_tq(bits=3)
         elif self.scheme == "tq4_k_only":
             self._tq = self._load_tq(bits=4)
+
+        if self.use_fused_tq and self.scheme in ("tq3", "tq3_k_only"):
+            try:
+                from tq_triton import turboquant_attention_fwd, compress_kv_for_triton
+                self._fused_tq_fn = turboquant_attention_fwd
+                self._fused_tq_pack = compress_kv_for_triton
+            except Exception:
+                self._fused_tq_fn = None
+                self._fused_tq_pack = None
 
         self._orig_sdpa = F.scaled_dot_product_attention
         F.scaled_dot_product_attention = self._make_patched_sdpa()
@@ -279,6 +316,11 @@ def main():
                         help="Number of WikiText-2 tokens to evaluate (0 = all)")
     parser.add_argument("--context-len", type=int, default=512,
                         help="Context window size for strided PPL evaluation")
+    parser.add_argument(
+        "--disable-fused-tq",
+        action="store_true",
+        help="Force TQ paths to use compress+decompress emulation.",
+    )
     args = parser.parse_args()
 
     schemes = ["fp16", "tq3", "tq3_k_only", "tq4_k_only"]
@@ -331,7 +373,10 @@ def main():
     print("-" * len(header))
 
     for scheme in schemes:
-        patcher = SDPAKVPatcher(scheme=scheme)
+        patcher = SDPAKVPatcher(
+            scheme=scheme,
+            use_fused_tq=not args.disable_fused_tq,
+        )
 
         try:
             result = compute_ppl(

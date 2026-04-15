@@ -42,8 +42,9 @@ from typing import Optional
 import torch
 
 _THIS_DIR   = Path(__file__).parent
-_SRC_PATH   = _THIS_DIR / "tq_mfma_rotate.hip.cpp"
-_HSACO_PATH = _THIS_DIR / "tq_mfma_rotate_cov5.hsaco"
+_HIP_DIR    = _THIS_DIR / "hip"
+_SRC_PATH   = _HIP_DIR / "tq_mfma_rotate.hip.cpp"
+_HSACO_PATH = _HIP_DIR / "tq_mfma_rotate_cov5.hsaco"
 
 _ARCH     = "gfx942:sramecc+:xnack-"
 _HIPCC    = Path("/opt/rocm/bin/hipcc")

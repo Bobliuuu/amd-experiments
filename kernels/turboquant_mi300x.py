@@ -1,31 +1,28 @@
 """
-turboquant_mi300x.py — TurboQuant TQ3/TQ4 for AMD Instinct MI300X
+turboquant_mi300x.py — TurboQuant TQ3/TQ4 Python wrapper for AMD Instinct MI300X
 
-Implements compress/decompress/fused-dot using pure PyTorch ops (no ctypes).
-The rotation matrix multiply uses torch.matmul → rocBLAS → MFMA on gfx942.
+Pure-PyTorch implementation of TurboQuant compress/decompress/fused-dot.
+All tensor operations route through torch.matmul → rocBLAS → MFMA on gfx942,
+providing hardware-accelerated rotation without a custom kernel binary.
 
-Why pure PyTorch?
-  The standalone HIP library (libturboquant_mi300x.so) was compiled with
-  system ROCm 7.2 hipcc, but PyTorch ships its own libamdhip64.so built
-  against ROCm 6.2.  HIP fat-binary registration (hipError 209) fails when
-  the two ABI versions coexist in the same process.  PyTorch's own kernels
-  call rocBLAS / rocWMMA internally and DO use MFMA units — so the rotation
-  GEMM is hardware-accelerated without any custom kernel.
+Why not the HIP .so?
+  libturboquant_mi300x.so is compiled with system ROCm 7.2. PyTorch bundles
+  libamdhip64.so built against ROCm 6.2. The fat-binary ABI is not
+  backward-compatible, so hipMemcpyToSymbol returns error 209 when both are
+  loaded in the same process. The standalone validation binary
+  (kernels/hip/tq_validate_mi300x) works fine because it uses only ROCm 7.2.
 
-  The standalone binary (tq_validate_mi300x) still works for isolated
-  throughput benchmarks.
+Public API
+----------
+  make_rotation_matrix(seed, dim, device)  →  (dim, dim) float32 orthogonal matrix
+  compress(x, rotation, bits)              →  bytes tensor (n, block_bytes) uint8
+  decompress(packed, rotation, bits)       →  (n, head_dim) float32
+  TurboQuantMI300X                         →  stateful wrapper (holds rotation matrix)
 
-Block layout (must match turboquant_mi300x.h):
-  block_tq3_mi300x (52 bytes):
-    [0..3]   float32 norm
-    [4..51]  3 bitplanes, 16 bytes each (LSB-first)
-
-  Bitplane format:
-    Plane b (b=0 LSB, b=2 MSB): 128-bit mask
-      bits 0-63   = bit b of index[0..63]  (stored as uint64 LE)
-      bits 64-127 = bit b of index[64..127]
-
-Author: AMD ROCm TurboQuant benchmarking study, April 2026
+Block layout (bit-exact match with kernels/hip/turboquant_mi300x.h)
+  TQ3 (52 bytes):  [norm: 4B float32][planes: 3 × 16B bitplane]
+  TQ4 (68 bytes):  [norm: 4B float32][planes: 4 × 16B bitplane]
+  Bitplane b: bit b of index[j] at byte-offset (b*16 + j//8), bit (j%8)
 """
 
 from __future__ import annotations

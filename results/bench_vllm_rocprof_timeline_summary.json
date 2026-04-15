@@ -1,0 +1,268 @@
+{
+  "meta": {
+    "rocprof_kernel_trace": true,
+    "rocprof_hip_trace": false,
+    "enforce_eager": true,
+    "model": "mistralai/Mistral-7B-v0.1",
+    "input_len": 256,
+    "output_len": 64,
+    "num_prompts": 8
+  },
+  "results": [
+    {
+      "trace_files": [
+        "/root/workspace/amd-experiments/results/rocprof_fp16/results_789424.csv"
+      ],
+      "total_kernel_time_us": 1097282.232,
+      "top_kernels": [
+        {
+          "kernel": "Cijk_Alik_Bljk_HHS_BH_Bias_HA_S_SAV_UserArgs_MT256x192x64_MI16x16x1_SN_LDSB1_AFC1_AFEM1_AFEM1_ASEM1_CLR1_CADS0_DTLA0_DTLB0_DTVA0_DTVB0_EPS0_FDSI0_GRPM1_GRVWA8_GRVWB8_GSUAMBSK_GLS0_ISA942_IU1_K1_LDSTI0_LBSPPA1024_LBSPPB256_LBSPPM0_LPA16_LPB16_LPM0_LRVW8_LWPMn1_MIAV0_MIWT8_6_MO40_NTn1_NTA0_NTB0_NTC0_NTD4_NTM0_NEPBS16_NLCA1_NLCB1_ONLL1_PGR2_PLR1_PKA1_SIA3_SS1_SPO0_SRVW0_SSO0_SVW8_SK0_SKFTR0_SKXCCM0_TLDS1_ULSGRO1_USL1_UIOFGRO0_USFGROn1_VSn1_VWA8_VWB2_WSGRA0_WSGRB0_WS64_WG32_8_1.kd",
+          "time_us": 252837.666,
+          "share_pct": 23.04
+        },
+        {
+          "kernel": "Cijk_Alik_Bljk_HHS_BH_Bias_HA_S_SAV_UserArgs_MT32x16x512_MI16x16x1_SN_LDSB1_AFC1_AFEM1_AFEM1_ASEM1_CLR1_CADS0_DTLA0_DTLB0_DTVA0_DTVB0_EPS0_FDSI0_GRPM1_GRVWA8_GRVWB8_GSUAMBSK_GLS0_ISA942_IU1_K1_LDSTI0_LBSPPA2048_LBSPPB1024_LBSPPM0_LPA16_LPB16_LPM0_LRVW8_LWPMn1_MIAV0_MIWT2_1_MO40_NTn1_NTA0_NTB0_NTC0_NTD4_NTM0_NEPBS16_NLCA1_NLCB1_ONLL1_PGR2_PLR1_PKA1_SIA3_SS1_SPO0_SRVW0_SSO0_SVW2_SK0_SKFTR0_SKXCCM0_TLDS1_ULSGRO1_USL1_UIOFGRO0_USFGROn1_VSn1_VWA2_VWB1_WSGRA0_WSGRB0_WS64_WG16_4_4.kd",
+          "time_us": 141993.073,
+          "share_pct": 12.94
+        },
+        {
+          "kernel": "void wvSplitK_hf_sml_<__half, 64, 4, 16, 8, 2, 2>(int, int, int, int, int, int, __half const*, __half const*, __half const*, __half*, int, int) (.kd)",
+          "time_us": 113666.999,
+          "share_pct": 10.36
+        },
+        {
+          "kernel": "void wvSplitK_hf_sml_<__half, 64, 2, 16, 8, 2, 2>(int, int, int, int, int, int, __half const*, __half const*, __half const*, __half*, int, int) (.kd)",
+          "time_us": 104006.581,
+          "share_pct": 9.48
+        },
+        {
+          "kernel": "Cijk_Alik_Bljk_HHS_BH_Bias_HA_S_SAV_UserArgs_MT64x16x256_MI16x16x1_SN_LDSB1_AFC1_AFEM1_AFEM1_ASEM1_CLR1_CADS0_DTLA0_DTLB0_DTVA0_DTVB0_EPS0_FDSI0_GRPM1_GRVWA8_GRVWB8_GSUAMBSK_GLS0_ISA942_IU1_K1_LDSTI0_LBSPPA2048_LBSPPB512_LBSPPM0_LPA16_LPB16_LPM0_LRVW8_LWPMn1_MIAV0_MIWT4_1_MO40_NTn1_NTA0_NTB0_NTC0_NTD4_NTM0_NEPBS16_NLCA1_NLCB1_ONLL1_PGR2_PLR1_PKA1_SIA3_SS1_SPO0_SRVW0_SSO0_SVW4_SK0_SKFTR0_SKXCCM0_TLDS1_ULSGRO1_USL1_UIOFGRO0_USFGROn1_VSn1_VWA4_VWB1_WSGRA0_WSGRB0_WS64_WG16_4_4.kd",
+          "time_us": 66248.799,
+          "share_pct": 6.04
+        },
+        {
+          "kernel": "std::enable_if<(8 > 0) && _typeConvert<c10::Half>::exists, void>::type vllm::fused_add_rms_norm_kernel<c10::Half, 8>(c10::Half*, long, c10::Half*, c10::Half const*, float, int, int) (.kd)",
+          "time_us": 43570.605,
+          "share_pct": 3.97
+        },
+        {
+          "kernel": "Cijk_Alik_Bljk_HHS_BH_Bias_HA_S_SAV_UserArgs_MT192x256x64_MI16x16x1_SN_LDSB1_AFC1_AFEM1_AFEM1_ASEM1_CLR1_CADS0_DTLA0_DTLB0_DTVA0_DTVB0_EPS0_FDSI0_GRPM1_GRVWA8_GRVWB8_GSUAMBSK_GLS0_ISA942_IU1_K1_LDSTI0_LBSPPA256_LBSPPB1024_LBSPPM0_LPA16_LPB16_LPM0_LRVW8_LWPMn1_MIAV0_MIWT6_8_MO40_NTn1_NTA0_NTB0_NTC0_NTD4_NTM0_NEPBS16_NLCA1_NLCB1_ONLL1_PGR2_PLR1_PKA1_SIA3_SS1_SPO0_SRVW0_SSO0_SVW2_SK0_SKFTR0_SKXCCM0_TLDS1_ULSGRO0_USL1_UIOFGRO0_USFGROn1_VSn1_VWA2_VWB8_WSGRA0_WSGRB0_WS64_WG32_8_1.kd",
+          "time_us": 42517.264,
+          "share_pct": 3.87
+        },
+        {
+          "kernel": "Cijk_Alik_Bljk_HHS_BH_Bias_HA_S_SAV_UserArgs_MT64x16x128_MI16x16x1_SN_LDSB1_AFC1_AFEM1_AFEM1_ASEM1_CLR1_CADS0_DTLA0_DTLB0_DTVA0_DTVB0_EPS0_FDSI0_GRPM1_GRVWA8_GRVWB8_GSUAMBSK_GLS0_ISA942_IU1_K1_LDSTI0_LBSPPA1024_LBSPPB256_LBSPPM0_LPA16_LPB16_LPM0_LRVW8_LWPMn1_MIAV0_MIWT4_1_MO40_NTn1_NTA0_NTB0_NTC0_NTD4_NTM0_NEPBS16_NLCA1_NLCB1_ONLL1_PGR2_PLR1_PKA1_SIA3_SS1_SPO0_SRVW0_SSO0_SVW4_SK0_SKFTR0_SKXCCM0_TLDS1_ULSGRO1_USL1_UIOFGRO0_USFGROn1_VSn1_VWA4_VWB1_WSGRA0_WSGRB0_WS64_WG16_4_4.kd",
+          "time_us": 36060.825,
+          "share_pct": 3.29
+        },
+        {
+          "kernel": "void at::native::vectorized_elementwise_kernel<16, at::native::FillFunctor<signed char>, std::array<char*, 1ul>>(int, at::native::FillFunctor<signed char>, std::array<char*, 1ul>) (.kd)",
+          "time_us": 34724.25,
+          "share_pct": 3.16
+        },
+        {
+          "kernel": "void vllm::act_and_mul_kernel<c10::Half, __half2, &c10::Half vllm::silu_kernel<c10::Half>(c10::Half const&), &c10::Half vllm::packed_silu_kernel<__half2>(c10::Half const&), true, true, false>(c10::Half*, c10::Half const*, int) (.kd)",
+          "time_us": 33789.119,
+          "share_pct": 3.08
+        },
+        {
+          "kernel": "Cijk_Alik_Bljk_HHS_BH_Bias_HA_S_SAV_UserArgs_MT16x16x512_MI16x16x1_SN_LDSB1_AFC1_AFEM1_AFEM1_ASEM1_CLR1_CADS0_DTLA0_DTLB0_DTVA0_DTVB0_EPS0_FDSI0_GRPM1_GRVWA8_GRVWB8_GSUAMBSK_GLS0_ISA942_IU1_K1_LDSTI0_LBSPPA1024_LBSPPB1024_LBSPPM0_LPA16_LPB16_LPM0_LRVW8_LWPMn1_MIAV0_MIWT1_1_MO40_NTn1_NTA0_NTB0_NTC0_NTD4_NTM0_NEPBS16_NLCA1_NLCB1_ONLL1_PGR2_PLR1_PKA1_SIA3_SS1_SPO0_SRVW0_SSO0_SVW1_SK0_SKFTR0_SKXCCM0_TLDS1_ULSGRO1_USL1_UIOFGRO0_USFGROn1_VSn1_VWA1_VWB1_WSGRA0_WSGRB0_WS64_WG16_4_4.kd",
+          "time_us": 28693.515,
+          "share_pct": 2.61
+        },
+        {
+          "kernel": "Cijk_Alik_Bljk_HHS_BH_Bias_HA_S_SAV_UserArgs_MT256x128x64_MI16x16x1_SN_LDSB1_AFC1_AFEM1_AFEM1_ASEM1_CLR1_CADS0_DTLA0_DTLB0_DTVA0_DTVB0_EPS0_FDSI0_GRPM1_GRVWA8_GRVWB8_GSUAMBSK_GLS0_ISA942_IU1_K1_LDSTI0_LBSPPA1024_LBSPPB512_LBSPPM0_LPA16_LPB16_LPM0_LRVW8_LWPMn1_MIAV0_MIWT8_4_MO40_NTn1_NTA0_NTB0_NTC0_NTD4_NTM0_NEPBS16_NLCA1_NLCB1_ONLL1_PGR2_PLR1_PKA1_SIA3_SS1_SPO0_SRVW0_SSO0_SVW8_SK0_SKFTR0_SKXCCM0_TLDS1_ULSGRO1_USL1_UIOFGRO0_USFGROn1_VSn1_VWA8_VWB4_WSGRA0_WSGRB0_WS64_WG32_8_1.kd",
+          "time_us": 23388.11,
+          "share_pct": 2.13
+        },
+        {
+          "kernel": "void paged_attention_ll4mi_QKV_mfma4_kernel<_Float16, _Float16, (vllm::Fp8KVCacheDataType)0, _Float16, 16, 128, 256, false, 4>(_Float16 const*, _Float16 const*, _Float16 const*, int, float, int const*, int const*, int const*, int, float const*, int, int, int, float*, float*, _Float16*, _Float16*, int, float const*, float const*) (.kd)",
+          "time_us": 23304.742,
+          "share_pct": 2.12
+        },
+        {
+          "kernel": "void vllm::reshape_and_cache_kernel<unsigned short, unsigned short, (vllm::Fp8KVCacheDataType)0>(unsigned short const*, unsigned short const*, unsigned short*, unsigned short*, long const*, int, int, int, int, int, int, float const*, float const*) (.kd)",
+          "time_us": 21945.807,
+          "share_pct": 2.0
+        },
+        {
+          "kernel": "void vllm::rotary_embedding_kernel<c10::Half, true>(long const*, c10::Half*, c10::Half*, c10::Half const*, int, long, long, long, int, int, int) (.kd)",
+          "time_us": 20957.107,
+          "share_pct": 1.91
+        }
+      ],
+      "mode": "fp16",
+      "ab_result_json": "/root/workspace/amd-experiments/results/bench_vllm_turboquant_ab_fp16.json"
+    },
+    {
+      "trace_files": [
+        "/root/workspace/amd-experiments/results/rocprof_turboquant_decompress/results_789749.csv"
+      ],
+      "total_kernel_time_us": 1101602.554,
+      "top_kernels": [
+        {
+          "kernel": "Cijk_Alik_Bljk_HHS_BH_Bias_HA_S_SAV_UserArgs_MT256x192x64_MI16x16x1_SN_LDSB1_AFC1_AFEM1_AFEM1_ASEM1_CLR1_CADS0_DTLA0_DTLB0_DTVA0_DTVB0_EPS0_FDSI0_GRPM1_GRVWA8_GRVWB8_GSUAMBSK_GLS0_ISA942_IU1_K1_LDSTI0_LBSPPA1024_LBSPPB256_LBSPPM0_LPA16_LPB16_LPM0_LRVW8_LWPMn1_MIAV0_MIWT8_6_MO40_NTn1_NTA0_NTB0_NTC0_NTD4_NTM0_NEPBS16_NLCA1_NLCB1_ONLL1_PGR2_PLR1_PKA1_SIA3_SS1_SPO0_SRVW0_SSO0_SVW8_SK0_SKFTR0_SKXCCM0_TLDS1_ULSGRO1_USL1_UIOFGRO0_USFGROn1_VSn1_VWA8_VWB2_WSGRA0_WSGRB0_WS64_WG32_8_1.kd",
+          "time_us": 253648.111,
+          "share_pct": 23.03
+        },
+        {
+          "kernel": "Cijk_Alik_Bljk_HHS_BH_Bias_HA_S_SAV_UserArgs_MT32x16x512_MI16x16x1_SN_LDSB1_AFC1_AFEM1_AFEM1_ASEM1_CLR1_CADS0_DTLA0_DTLB0_DTVA0_DTVB0_EPS0_FDSI0_GRPM1_GRVWA8_GRVWB8_GSUAMBSK_GLS0_ISA942_IU1_K1_LDSTI0_LBSPPA2048_LBSPPB1024_LBSPPM0_LPA16_LPB16_LPM0_LRVW8_LWPMn1_MIAV0_MIWT2_1_MO40_NTn1_NTA0_NTB0_NTC0_NTD4_NTM0_NEPBS16_NLCA1_NLCB1_ONLL1_PGR2_PLR1_PKA1_SIA3_SS1_SPO0_SRVW0_SSO0_SVW2_SK0_SKFTR0_SKXCCM0_TLDS1_ULSGRO1_USL1_UIOFGRO0_USFGROn1_VSn1_VWA2_VWB1_WSGRA0_WSGRB0_WS64_WG16_4_4.kd",
+          "time_us": 142744.818,
+          "share_pct": 12.96
+        },
+        {
+          "kernel": "void wvSplitK_hf_sml_<__half, 64, 4, 16, 8, 2, 2>(int, int, int, int, int, int, __half const*, __half const*, __half const*, __half*, int, int) (.kd)",
+          "time_us": 113478.738,
+          "share_pct": 10.3
+        },
+        {
+          "kernel": "void wvSplitK_hf_sml_<__half, 64, 2, 16, 8, 2, 2>(int, int, int, int, int, int, __half const*, __half const*, __half const*, __half*, int, int) (.kd)",
+          "time_us": 103773.243,
+          "share_pct": 9.42
+        },
+        {
+          "kernel": "Cijk_Alik_Bljk_HHS_BH_Bias_HA_S_SAV_UserArgs_MT64x16x256_MI16x16x1_SN_LDSB1_AFC1_AFEM1_AFEM1_ASEM1_CLR1_CADS0_DTLA0_DTLB0_DTVA0_DTVB0_EPS0_FDSI0_GRPM1_GRVWA8_GRVWB8_GSUAMBSK_GLS0_ISA942_IU1_K1_LDSTI0_LBSPPA2048_LBSPPB512_LBSPPM0_LPA16_LPB16_LPM0_LRVW8_LWPMn1_MIAV0_MIWT4_1_MO40_NTn1_NTA0_NTB0_NTC0_NTD4_NTM0_NEPBS16_NLCA1_NLCB1_ONLL1_PGR2_PLR1_PKA1_SIA3_SS1_SPO0_SRVW0_SSO0_SVW4_SK0_SKFTR0_SKXCCM0_TLDS1_ULSGRO1_USL1_UIOFGRO0_USFGROn1_VSn1_VWA4_VWB1_WSGRA0_WSGRB0_WS64_WG16_4_4.kd",
+          "time_us": 66554.965,
+          "share_pct": 6.04
+        },
+        {
+          "kernel": "std::enable_if<(8 > 0) && _typeConvert<c10::Half>::exists, void>::type vllm::fused_add_rms_norm_kernel<c10::Half, 8>(c10::Half*, long, c10::Half*, c10::Half const*, float, int, int) (.kd)",
+          "time_us": 45121.301,
+          "share_pct": 4.1
+        },
+        {
+          "kernel": "Cijk_Alik_Bljk_HHS_BH_Bias_HA_S_SAV_UserArgs_MT192x256x64_MI16x16x1_SN_LDSB1_AFC1_AFEM1_AFEM1_ASEM1_CLR1_CADS0_DTLA0_DTLB0_DTVA0_DTVB0_EPS0_FDSI0_GRPM1_GRVWA8_GRVWB8_GSUAMBSK_GLS0_ISA942_IU1_K1_LDSTI0_LBSPPA256_LBSPPB1024_LBSPPM0_LPA16_LPB16_LPM0_LRVW8_LWPMn1_MIAV0_MIWT6_8_MO40_NTn1_NTA0_NTB0_NTC0_NTD4_NTM0_NEPBS16_NLCA1_NLCB1_ONLL1_PGR2_PLR1_PKA1_SIA3_SS1_SPO0_SRVW0_SSO0_SVW2_SK0_SKFTR0_SKXCCM0_TLDS1_ULSGRO0_USL1_UIOFGRO0_USFGROn1_VSn1_VWA2_VWB8_WSGRA0_WSGRB0_WS64_WG32_8_1.kd",
+          "time_us": 41561.333,
+          "share_pct": 3.77
+        },
+        {
+          "kernel": "Cijk_Alik_Bljk_HHS_BH_Bias_HA_S_SAV_UserArgs_MT64x16x128_MI16x16x1_SN_LDSB1_AFC1_AFEM1_AFEM1_ASEM1_CLR1_CADS0_DTLA0_DTLB0_DTVA0_DTVB0_EPS0_FDSI0_GRPM1_GRVWA8_GRVWB8_GSUAMBSK_GLS0_ISA942_IU1_K1_LDSTI0_LBSPPA1024_LBSPPB256_LBSPPM0_LPA16_LPB16_LPM0_LRVW8_LWPMn1_MIAV0_MIWT4_1_MO40_NTn1_NTA0_NTB0_NTC0_NTD4_NTM0_NEPBS16_NLCA1_NLCB1_ONLL1_PGR2_PLR1_PKA1_SIA3_SS1_SPO0_SRVW0_SSO0_SVW4_SK0_SKFTR0_SKXCCM0_TLDS1_ULSGRO1_USL1_UIOFGRO0_USFGROn1_VSn1_VWA4_VWB1_WSGRA0_WSGRB0_WS64_WG16_4_4.kd",
+          "time_us": 35932.187,
+          "share_pct": 3.26
+        },
+        {
+          "kernel": "void vllm::act_and_mul_kernel<c10::Half, __half2, &c10::Half vllm::silu_kernel<c10::Half>(c10::Half const&), &c10::Half vllm::packed_silu_kernel<__half2>(c10::Half const&), true, true, false>(c10::Half*, c10::Half const*, int) (.kd)",
+          "time_us": 34986.647,
+          "share_pct": 3.18
+        },
+        {
+          "kernel": "void at::native::vectorized_elementwise_kernel<16, at::native::FillFunctor<signed char>, std::array<char*, 1ul>>(int, at::native::FillFunctor<signed char>, std::array<char*, 1ul>) (.kd)",
+          "time_us": 34768.517,
+          "share_pct": 3.16
+        },
+        {
+          "kernel": "Cijk_Alik_Bljk_HHS_BH_Bias_HA_S_SAV_UserArgs_MT16x16x512_MI16x16x1_SN_LDSB1_AFC1_AFEM1_AFEM1_ASEM1_CLR1_CADS0_DTLA0_DTLB0_DTVA0_DTVB0_EPS0_FDSI0_GRPM1_GRVWA8_GRVWB8_GSUAMBSK_GLS0_ISA942_IU1_K1_LDSTI0_LBSPPA1024_LBSPPB1024_LBSPPM0_LPA16_LPB16_LPM0_LRVW8_LWPMn1_MIAV0_MIWT1_1_MO40_NTn1_NTA0_NTB0_NTC0_NTD4_NTM0_NEPBS16_NLCA1_NLCB1_ONLL1_PGR2_PLR1_PKA1_SIA3_SS1_SPO0_SRVW0_SSO0_SVW1_SK0_SKFTR0_SKXCCM0_TLDS1_ULSGRO1_USL1_UIOFGRO0_USFGROn1_VSn1_VWA1_VWB1_WSGRA0_WSGRB0_WS64_WG16_4_4.kd",
+          "time_us": 28855.589,
+          "share_pct": 2.62
+        },
+        {
+          "kernel": "Cijk_Alik_Bljk_HHS_BH_Bias_HA_S_SAV_UserArgs_MT256x128x64_MI16x16x1_SN_LDSB1_AFC1_AFEM1_AFEM1_ASEM1_CLR1_CADS0_DTLA0_DTLB0_DTVA0_DTVB0_EPS0_FDSI0_GRPM1_GRVWA8_GRVWB8_GSUAMBSK_GLS0_ISA942_IU1_K1_LDSTI0_LBSPPA1024_LBSPPB512_LBSPPM0_LPA16_LPB16_LPM0_LRVW8_LWPMn1_MIAV0_MIWT8_4_MO40_NTn1_NTA0_NTB0_NTC0_NTD4_NTM0_NEPBS16_NLCA1_NLCB1_ONLL1_PGR2_PLR1_PKA1_SIA3_SS1_SPO0_SRVW0_SSO0_SVW8_SK0_SKFTR0_SKXCCM0_TLDS1_ULSGRO1_USL1_UIOFGRO0_USFGROn1_VSn1_VWA8_VWB4_WSGRA0_WSGRB0_WS64_WG32_8_1.kd",
+          "time_us": 23399.057,
+          "share_pct": 2.12
+        },
+        {
+          "kernel": "void paged_attention_ll4mi_QKV_mfma4_kernel<_Float16, _Float16, (vllm::Fp8KVCacheDataType)0, _Float16, 16, 128, 256, false, 4>(_Float16 const*, _Float16 const*, _Float16 const*, int, float, int const*, int const*, int const*, int, float const*, int, int, int, float*, float*, _Float16*, _Float16*, int, float const*, float const*) (.kd)",
+          "time_us": 23156.876,
+          "share_pct": 2.1
+        },
+        {
+          "kernel": "void vllm::reshape_and_cache_kernel<unsigned short, unsigned short, (vllm::Fp8KVCacheDataType)0>(unsigned short const*, unsigned short const*, unsigned short*, unsigned short*, long const*, int, int, int, int, int, int, float const*, float const*) (.kd)",
+          "time_us": 21633.152,
+          "share_pct": 1.96
+        },
+        {
+          "kernel": "void vllm::rotary_embedding_kernel<c10::Half, true>(long const*, c10::Half*, c10::Half*, c10::Half const*, int, long, long, long, int, int, int) (.kd)",
+          "time_us": 21324.413,
+          "share_pct": 1.94
+        }
+      ],
+      "mode": "turboquant_decompress",
+      "ab_result_json": "/root/workspace/amd-experiments/results/bench_vllm_turboquant_ab_turboquant_decompress.json"
+    },
+    {
+      "trace_files": [
+        "/root/workspace/amd-experiments/results/rocprof_turboquant_fused/results_790069.csv"
+      ],
+      "total_kernel_time_us": 1099287.871,
+      "top_kernels": [
+        {
+          "kernel": "Cijk_Alik_Bljk_HHS_BH_Bias_HA_S_SAV_UserArgs_MT256x192x64_MI16x16x1_SN_LDSB1_AFC1_AFEM1_AFEM1_ASEM1_CLR1_CADS0_DTLA0_DTLB0_DTVA0_DTVB0_EPS0_FDSI0_GRPM1_GRVWA8_GRVWB8_GSUAMBSK_GLS0_ISA942_IU1_K1_LDSTI0_LBSPPA1024_LBSPPB256_LBSPPM0_LPA16_LPB16_LPM0_LRVW8_LWPMn1_MIAV0_MIWT8_6_MO40_NTn1_NTA0_NTB0_NTC0_NTD4_NTM0_NEPBS16_NLCA1_NLCB1_ONLL1_PGR2_PLR1_PKA1_SIA3_SS1_SPO0_SRVW0_SSO0_SVW8_SK0_SKFTR0_SKXCCM0_TLDS1_ULSGRO1_USL1_UIOFGRO0_USFGROn1_VSn1_VWA8_VWB2_WSGRA0_WSGRB0_WS64_WG32_8_1.kd",
+          "time_us": 253649.972,
+          "share_pct": 23.07
+        },
+        {
+          "kernel": "Cijk_Alik_Bljk_HHS_BH_Bias_HA_S_SAV_UserArgs_MT32x16x512_MI16x16x1_SN_LDSB1_AFC1_AFEM1_AFEM1_ASEM1_CLR1_CADS0_DTLA0_DTLB0_DTVA0_DTVB0_EPS0_FDSI0_GRPM1_GRVWA8_GRVWB8_GSUAMBSK_GLS0_ISA942_IU1_K1_LDSTI0_LBSPPA2048_LBSPPB1024_LBSPPM0_LPA16_LPB16_LPM0_LRVW8_LWPMn1_MIAV0_MIWT2_1_MO40_NTn1_NTA0_NTB0_NTC0_NTD4_NTM0_NEPBS16_NLCA1_NLCB1_ONLL1_PGR2_PLR1_PKA1_SIA3_SS1_SPO0_SRVW0_SSO0_SVW2_SK0_SKFTR0_SKXCCM0_TLDS1_ULSGRO1_USL1_UIOFGRO0_USFGROn1_VSn1_VWA2_VWB1_WSGRA0_WSGRB0_WS64_WG16_4_4.kd",
+          "time_us": 142012.131,
+          "share_pct": 12.92
+        },
+        {
+          "kernel": "void wvSplitK_hf_sml_<__half, 64, 4, 16, 8, 2, 2>(int, int, int, int, int, int, __half const*, __half const*, __half const*, __half*, int, int) (.kd)",
+          "time_us": 113273.532,
+          "share_pct": 10.3
+        },
+        {
+          "kernel": "void wvSplitK_hf_sml_<__half, 64, 2, 16, 8, 2, 2>(int, int, int, int, int, int, __half const*, __half const*, __half const*, __half*, int, int) (.kd)",
+          "time_us": 104167.572,
+          "share_pct": 9.48
+        },
+        {
+          "kernel": "Cijk_Alik_Bljk_HHS_BH_Bias_HA_S_SAV_UserArgs_MT64x16x256_MI16x16x1_SN_LDSB1_AFC1_AFEM1_AFEM1_ASEM1_CLR1_CADS0_DTLA0_DTLB0_DTVA0_DTVB0_EPS0_FDSI0_GRPM1_GRVWA8_GRVWB8_GSUAMBSK_GLS0_ISA942_IU1_K1_LDSTI0_LBSPPA2048_LBSPPB512_LBSPPM0_LPA16_LPB16_LPM0_LRVW8_LWPMn1_MIAV0_MIWT4_1_MO40_NTn1_NTA0_NTB0_NTC0_NTD4_NTM0_NEPBS16_NLCA1_NLCB1_ONLL1_PGR2_PLR1_PKA1_SIA3_SS1_SPO0_SRVW0_SSO0_SVW4_SK0_SKFTR0_SKXCCM0_TLDS1_ULSGRO1_USL1_UIOFGRO0_USFGROn1_VSn1_VWA4_VWB1_WSGRA0_WSGRB0_WS64_WG16_4_4.kd",
+          "time_us": 66382.168,
+          "share_pct": 6.04
+        },
+        {
+          "kernel": "std::enable_if<(8 > 0) && _typeConvert<c10::Half>::exists, void>::type vllm::fused_add_rms_norm_kernel<c10::Half, 8>(c10::Half*, long, c10::Half*, c10::Half const*, float, int, int) (.kd)",
+          "time_us": 44485.044,
+          "share_pct": 4.05
+        },
+        {
+          "kernel": "Cijk_Alik_Bljk_HHS_BH_Bias_HA_S_SAV_UserArgs_MT192x256x64_MI16x16x1_SN_LDSB1_AFC1_AFEM1_AFEM1_ASEM1_CLR1_CADS0_DTLA0_DTLB0_DTVA0_DTVB0_EPS0_FDSI0_GRPM1_GRVWA8_GRVWB8_GSUAMBSK_GLS0_ISA942_IU1_K1_LDSTI0_LBSPPA256_LBSPPB1024_LBSPPM0_LPA16_LPB16_LPM0_LRVW8_LWPMn1_MIAV0_MIWT6_8_MO40_NTn1_NTA0_NTB0_NTC0_NTD4_NTM0_NEPBS16_NLCA1_NLCB1_ONLL1_PGR2_PLR1_PKA1_SIA3_SS1_SPO0_SRVW0_SSO0_SVW2_SK0_SKFTR0_SKXCCM0_TLDS1_ULSGRO0_USL1_UIOFGRO0_USFGROn1_VSn1_VWA2_VWB8_WSGRA0_WSGRB0_WS64_WG32_8_1.kd",
+          "time_us": 41574.816,
+          "share_pct": 3.78
+        },
+        {
+          "kernel": "Cijk_Alik_Bljk_HHS_BH_Bias_HA_S_SAV_UserArgs_MT64x16x128_MI16x16x1_SN_LDSB1_AFC1_AFEM1_AFEM1_ASEM1_CLR1_CADS0_DTLA0_DTLB0_DTVA0_DTVB0_EPS0_FDSI0_GRPM1_GRVWA8_GRVWB8_GSUAMBSK_GLS0_ISA942_IU1_K1_LDSTI0_LBSPPA1024_LBSPPB256_LBSPPM0_LPA16_LPB16_LPM0_LRVW8_LWPMn1_MIAV0_MIWT4_1_MO40_NTn1_NTA0_NTB0_NTC0_NTD4_NTM0_NEPBS16_NLCA1_NLCB1_ONLL1_PGR2_PLR1_PKA1_SIA3_SS1_SPO0_SRVW0_SSO0_SVW4_SK0_SKFTR0_SKXCCM0_TLDS1_ULSGRO1_USL1_UIOFGRO0_USFGROn1_VSn1_VWA4_VWB1_WSGRA0_WSGRB0_WS64_WG16_4_4.kd",
+          "time_us": 36155.532,
+          "share_pct": 3.29
+        },
+        {
+          "kernel": "void vllm::act_and_mul_kernel<c10::Half, __half2, &c10::Half vllm::silu_kernel<c10::Half>(c10::Half const&), &c10::Half vllm::packed_silu_kernel<__half2>(c10::Half const&), true, true, false>(c10::Half*, c10::Half const*, int) (.kd)",
+          "time_us": 34908.018,
+          "share_pct": 3.18
+        },
+        {
+          "kernel": "void at::native::vectorized_elementwise_kernel<16, at::native::FillFunctor<signed char>, std::array<char*, 1ul>>(int, at::native::FillFunctor<signed char>, std::array<char*, 1ul>) (.kd)",
+          "time_us": 34751.084,
+          "share_pct": 3.16
+        },
+        {
+          "kernel": "Cijk_Alik_Bljk_HHS_BH_Bias_HA_S_SAV_UserArgs_MT16x16x512_MI16x16x1_SN_LDSB1_AFC1_AFEM1_AFEM1_ASEM1_CLR1_CADS0_DTLA0_DTLB0_DTVA0_DTVB0_EPS0_FDSI0_GRPM1_GRVWA8_GRVWB8_GSUAMBSK_GLS0_ISA942_IU1_K1_LDSTI0_LBSPPA1024_LBSPPB1024_LBSPPM0_LPA16_LPB16_LPM0_LRVW8_LWPMn1_MIAV0_MIWT1_1_MO40_NTn1_NTA0_NTB0_NTC0_NTD4_NTM0_NEPBS16_NLCA1_NLCB1_ONLL1_PGR2_PLR1_PKA1_SIA3_SS1_SPO0_SRVW0_SSO0_SVW1_SK0_SKFTR0_SKXCCM0_TLDS1_ULSGRO1_USL1_UIOFGRO0_USFGROn1_VSn1_VWA1_VWB1_WSGRA0_WSGRB0_WS64_WG16_4_4.kd",
+          "time_us": 28365.832,
+          "share_pct": 2.58
+        },
+        {
+          "kernel": "Cijk_Alik_Bljk_HHS_BH_Bias_HA_S_SAV_UserArgs_MT256x128x64_MI16x16x1_SN_LDSB1_AFC1_AFEM1_AFEM1_ASEM1_CLR1_CADS0_DTLA0_DTLB0_DTVA0_DTVB0_EPS0_FDSI0_GRPM1_GRVWA8_GRVWB8_GSUAMBSK_GLS0_ISA942_IU1_K1_LDSTI0_LBSPPA1024_LBSPPB512_LBSPPM0_LPA16_LPB16_LPM0_LRVW8_LWPMn1_MIAV0_MIWT8_4_MO40_NTn1_NTA0_NTB0_NTC0_NTD4_NTM0_NEPBS16_NLCA1_NLCB1_ONLL1_PGR2_PLR1_PKA1_SIA3_SS1_SPO0_SRVW0_SSO0_SVW8_SK0_SKFTR0_SKXCCM0_TLDS1_ULSGRO1_USL1_UIOFGRO0_USFGROn1_VSn1_VWA8_VWB4_WSGRA0_WSGRB0_WS64_WG32_8_1.kd",
+          "time_us": 23385.147,
+          "share_pct": 2.13
+        },
+        {
+          "kernel": "void paged_attention_ll4mi_QKV_mfma4_kernel<_Float16, _Float16, (vllm::Fp8KVCacheDataType)0, _Float16, 16, 128, 256, false, 4>(_Float16 const*, _Float16 const*, _Float16 const*, int, float, int const*, int const*, int const*, int, float const*, int, int, int, float*, float*, _Float16*, _Float16*, int, float const*, float const*) (.kd)",
+          "time_us": 22960.219,
+          "share_pct": 2.09
+        },
+        {
+          "kernel": "void vllm::reshape_and_cache_kernel<unsigned short, unsigned short, (vllm::Fp8KVCacheDataType)0>(unsigned short const*, unsigned short const*, unsigned short*, unsigned short*, long const*, int, int, int, int, int, int, float const*, float const*) (.kd)",
+          "time_us": 22080.397,
+          "share_pct": 2.01
+        },
+        {
+          "kernel": "void vllm::rotary_embedding_kernel<c10::Half, true>(long const*, c10::Half*, c10::Half*, c10::Half const*, int, long, long, long, int, int, int) (.kd)",
+          "time_us": 21293.541,
+          "share_pct": 1.94
+        }
+      ],
+      "mode": "turboquant_fused",
+      "ab_result_json": "/root/workspace/amd-experiments/results/bench_vllm_turboquant_ab_turboquant_fused.json"
+    }
+  ]
+}

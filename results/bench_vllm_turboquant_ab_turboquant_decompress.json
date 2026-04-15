@@ -1,0 +1,18 @@
+{
+  "model": "mistralai/Mistral-7B-v0.1",
+  "input_len": 256,
+  "output_len": 64,
+  "num_prompts": 8,
+  "device": "AMD Instinct MI300X VF",
+  "enforce_eager": true,
+  "results": [
+    {
+      "backend": "turboquant_decompress",
+      "elapsed_s": 1.01,
+      "throughput_output_tps": 507.2,
+      "vram_peak_gb": 0.0,
+      "engine_load_s": 13.34,
+      "enforce_eager": true
+    }
+  ]
+}

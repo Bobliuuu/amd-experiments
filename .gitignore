@@ -8,7 +8,20 @@ __pycache__/
 .venv/
 venv/
 
-# Results & outputs
+# HIP build artifacts (kernels/hip/build_mi300x.sh outputs)
+kernels/hip/*.so
+kernels/hip/*.hsaco
+kernels/hip/*.bc
+kernels/hip/*.hipi
+kernels/hip/*.o
+kernels/hip/*.s
+kernels/hip/*.hipfb
+kernels/hip/*.out
+kernels/hip/*.out.resolution.txt
+kernels/hip/tq_validate_mi300x
+kernels/hip/tq_bench_mi300x
+
+# Legacy root-level build artifacts
 *.hsaco
 
 # Editor

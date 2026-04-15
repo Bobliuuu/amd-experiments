@@ -1,5 +1,5 @@
 """
-bench_tq3_decode.py — End-to-end TQ3 KV cache decode benchmark
+bench_tq3_decode.py — End-to-end KV cache decode benchmark (TurboQuant bits)
 
 Measures tok/s for decode with TQ3-compressed KV cache vs FP16 baseline.
 Uses the pure-PyTorch TurboQuant wrapper (rotation via torch.matmul → MFMA).
@@ -8,6 +8,13 @@ Compression levels:
   FP16   — baseline (16 bits/element, no compression)
   TQ3    — 3-bit TurboQuant (4.92× compression vs FP16)
   TQ2    — 2-bit TurboQuant (7.11× compression vs FP16, experimental)
+
+Ratio semantics (explicit):
+  ratio_calculated_layout:
+      computed from bytes/vector layout formula (e.g., 256 / 52 = 4.923× for TQ3)
+  ratio_observed_runtime:
+      computed from materialized cache bytes in the run
+      (fp16_kv_bytes / compressed_kv_bytes)
 
 Protocol (matching paper's decode setup):
   1. Prefill at seq_len tokens in FP16 to warm up KV cache
@@ -46,6 +53,12 @@ RESULTS_DIR.mkdir(exist_ok=True)
 
 os.environ.setdefault("PYTORCH_TUNABLEOP_ENABLED", "0")
 os.environ.setdefault("HIP_FORCE_DEV_KERNARG", "1")
+
+try:
+    from tq_triton import compress_kv_for_triton, turboquant_attention_fwd
+except Exception:
+    compress_kv_for_triton = None
+    turboquant_attention_fwd = None
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -188,7 +201,9 @@ def bench_fp16_decode(
         "vram_peak_gb":     round(peak_vram, 2),
         "prefill_ms":       round(prefill_ms, 1),
         "kv_bytes":         fp16_kv_bytes,
-        "compression_ratio": 1.0,
+        "compression_ratio": 1.0,  # backward-compatible alias
+        "ratio_calculated_layout": 1.0,
+        "ratio_observed_runtime": 1.0,
         "n_decode":         n_decode,
         "n_runs":           n_runs,
     }
@@ -244,7 +259,8 @@ def bench_tq_decode(
     n_vecs_per_layer = sample_k.numel() // sample_k.shape[-1]
     tq_bytes_per_layer = n_vecs_per_layer * BLOCK_BYTES[bits]
     tq_bytes = tq_bytes_per_layer * len(cache.layers) * 2  # × 2 for K and V
-    actual_ratio = fp16_bytes / tq_bytes
+    ratio_observed_runtime = fp16_bytes / tq_bytes
+    ratio_calculated_layout = float(COMPRESSION_RATIO[bits])
 
     # Initial TQ round-trip on prefill cache
     t_comp0 = time.perf_counter()
@@ -293,11 +309,137 @@ def bench_tq_decode(
         "initial_compress_ms": round(compress_ms, 1),
         "kv_bytes_fp16":    fp16_bytes,
         "kv_bytes_tq":      tq_bytes,
-        "compression_ratio": round(actual_ratio, 3),
-        "theoretical_ratio": round(COMPRESSION_RATIO[bits], 3),
+        "compression_ratio": round(ratio_observed_runtime, 3),  # backward-compatible alias
+        "theoretical_ratio": round(ratio_calculated_layout, 3),  # backward-compatible alias
+        "ratio_calculated_layout": round(ratio_calculated_layout, 3),
+        "ratio_observed_runtime": round(ratio_observed_runtime, 3),
+        "packed_bytes_per_vector": int(BLOCK_BYTES[bits]),
+        "fp16_bytes_per_vector": 256,
+        "cache_layers": int(len(cache.layers)),
+        "cache_kv_heads": int(cache.layers[0].keys.shape[1]),
+        "cache_head_dim": int(cache.layers[0].keys.shape[-1]),
+        "tokens_done": int(n_decode * batch_size),
+        "tokens_target": int(n_decode * batch_size),
         "n_decode":         n_decode,
         "n_runs":           n_runs,
     }
+
+
+def bench_tq_fused_decode_step(
+    model, tokenizer,
+    tq,
+    seq_len: int,
+    n_decode: int = 30,
+    n_runs: int = 3,
+    batch_size: int = 1,
+) -> Dict:
+    """
+    Benchmark fused Triton attention on a persistent compressed KV cache.
+
+    This keeps KV in compressed (planes+norms) form in the hot loop and does not
+    rematerialize FP16 K/V each step. It benchmarks the decode attention step
+    throughput directly (query projection is approximated from cache shape).
+    """
+    if compress_kv_for_triton is None or turboquant_attention_fwd is None:
+        raise RuntimeError("tq_triton import failed; fused benchmark unavailable")
+
+    if tq.bits != 3:
+        raise ValueError("Fused Triton path currently supports TQ3 only")
+
+    model.eval()
+    torch.cuda.reset_peak_memory_stats()
+    prompt_ids = make_prompt_ids(tokenizer, seq_len, batch_size)
+
+    with torch.no_grad():
+        torch.cuda.synchronize()
+        t0 = time.perf_counter()
+        prefill_out = model(prompt_ids, use_cache=True)
+        torch.cuda.synchronize()
+        prefill_ms = (time.perf_counter() - t0) * 1000
+
+    cache = prefill_out.past_key_values
+    fp16_bytes = kv_memory_bytes_from_cache(cache)
+
+    # Build a persistent compressed cache from prefill KV.
+    layer0 = cache.layers[0]
+    k0 = layer0.keys
+    v0 = layer0.values
+    k_planes, k_norms, v_planes, v_norms = compress_kv_for_triton(k0, v0, tq)
+    tq_bytes = (k_planes.numel() + v_planes.numel() + 4 * (k_norms.numel() + v_norms.numel())) * len(cache.layers)
+    ratio_observed_runtime = fp16_bytes / max(tq_bytes, 1)
+
+    # Approximate decode query using the newest token across KV heads.
+    # Shape expected by fused kernel: (B, H, 1, D), pre-rotated.
+    q_fp = k0[:, :, -1:, :].contiguous()
+    q_rot = tq.rotate_queries(q_fp.float()).to(torch.float16)
+    sm_scale = q_fp.shape[-1] ** -0.5
+
+    del prefill_out
+    torch.cuda.empty_cache()
+    peak_vram = torch.cuda.max_memory_allocated() / 1e9
+    times = []
+
+    for _ in range(n_runs):
+        torch.cuda.synchronize()
+        t0 = time.perf_counter()
+        for _ in range(n_decode):
+            # Persistent compressed KV in hot loop (no decompress path).
+            out = turboquant_attention_fwd(
+                q_rot, k_planes, k_norms, v_planes, v_norms,
+                rotation=tq.rotation, sm_scale=sm_scale,
+            )
+            # Lightweight query update to avoid dead-code elimination patterns.
+            q_rot = out
+        torch.cuda.synchronize()
+        times.append(time.perf_counter() - t0)
+
+    elapsed = float(np.median(times))
+    return {
+        "mode": "tq3_fused",
+        "bits": 3,
+        "seq_len": seq_len,
+        "batch_size": batch_size,
+        "tokens_per_sec": round(n_decode * batch_size / elapsed, 2),
+        "tokens_per_sec_per_seq": round(n_decode / elapsed, 2),
+        "latency_ms": round(elapsed / n_decode * 1000, 3),
+        "vram_peak_gb": round(peak_vram, 2),
+        "prefill_ms": round(prefill_ms, 1),
+        "kv_bytes_fp16": fp16_bytes,
+        "kv_bytes_tq": tq_bytes,
+        "compression_ratio": round(ratio_observed_runtime, 3),
+        "ratio_calculated_layout": 4.923,
+        "ratio_observed_runtime": round(ratio_observed_runtime, 3),
+        "path": "fused_triton_decode_step",
+        "n_decode": n_decode,
+        "n_runs": n_runs,
+    }
+
+
+def print_pretty_summary(result: Dict, model_name: str) -> None:
+    """Print screenshot-style summary block with actual run values."""
+    if result["mode"] == "fp16":
+        return
+    mode = result["mode"].upper()
+    cache_shape = (
+        f"{result.get('cache_layers', '?')} layers x "
+        f"{result.get('cache_kv_heads', '?')} KV heads x "
+        f"{result.get('cache_head_dim', '?')}d"
+    )
+    tq_kb = result.get("kv_bytes_tq", 0) / 1024.0
+    fp16_kb = result.get("kv_bytes_fp16", 0) / 1024.0
+    print()
+    print(f"{mode} - Generation Complete ({model_name})")
+    print("=" * 62)
+    print(f"Tokens    {result.get('tokens_done', 0)}/{result.get('tokens_target', 0)}")
+    print(f"Cache     {cache_shape}")
+    print(f"TQ size   {tq_kb:.1f} KB    FP16   {fp16_kb:.1f} KB")
+    print(
+        f"Ratio     calc={result.get('ratio_calculated_layout', 0):.3f}x   "
+        f"measured={result.get('ratio_observed_runtime', 0):.3f}x"
+    )
+    print(f"Speed     {result.get('tokens_per_sec', 0):.1f} tok/s")
+    print("=" * 62)
+    print()
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -320,7 +462,16 @@ def main():
                              " where TQ3 compression speedup is most visible.")
     parser.add_argument("--skip-fp16", action="store_true",
                         help="Skip FP16 baseline (if already measured)")
+    parser.add_argument(
+        "--include-fused-tq3",
+        action="store_true",
+        help="Also run persistent compressed KV fused decode-step benchmark (TQ3 only).",
+    )
     parser.add_argument("--output", type=str, default=None)
+    parser.add_argument(
+        "--pretty-summary", action="store_true",
+        help="Print screenshot-style summary blocks with actual runtime values."
+    )
     args = parser.parse_args()
 
     print("=== TQ KV Cache End-to-End Decode Benchmark ===")
@@ -408,11 +559,32 @@ def main():
                       f"{r['latency_ms']:>8.1f} | "
                       f"{r['compression_ratio']:>7.2f}× | "
                       f"{r['vram_peak_gb']:>8.1f}")
+                if args.pretty_summary:
+                    print_pretty_summary(r, args.model)
             except torch.cuda.OutOfMemoryError:
                 print(f"{seq_len:>8} | {f'tq{bits}':>6} | {args.batch_size:>5} |      OOM")
                 break
             except Exception as e:
                 print(f"{seq_len:>8} | {f'tq{bits}':>6} | {args.batch_size:>5} | ERROR: {e}")
+            finally:
+                gc.collect(); torch.cuda.empty_cache()
+
+        if args.include_fused_tq3 and 3 in args.bits:
+            tq = tq_engines[3]
+            try:
+                r = bench_tq_fused_decode_step(
+                    model, tokenizer, tq, seq_len,
+                    n_decode=args.n_decode, n_runs=args.n_runs, batch_size=args.batch_size,
+                )
+                all_results["results"].append(r)
+                print(f"{seq_len:>8} | {r['mode']:>6} | {args.batch_size:>5} | "
+                      f"{r['tokens_per_sec']:>9.1f} | "
+                      f"{r['tokens_per_sec_per_seq']:>10.1f} | "
+                      f"{r['latency_ms']:>8.1f} | "
+                      f"{r['compression_ratio']:>7.2f}× | "
+                      f"{r['vram_peak_gb']:>8.1f}")
+            except Exception as e:
+                print(f"{seq_len:>8} | {'tq3f':>6} | {args.batch_size:>5} | ERROR: {e}")
             finally:
                 gc.collect(); torch.cuda.empty_cache()
 

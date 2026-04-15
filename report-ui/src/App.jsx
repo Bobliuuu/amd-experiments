@@ -4,6 +4,7 @@ import NavBar from "./components/NavBar";
 import {
   ProblemSection,
   MathSection,
+  CompressionLandscapeSection,
   ResultsSection,
   ReasoningSection,
   ConclusionSection,
@@ -79,21 +80,21 @@ function Hero() {
           <motion.div className="scene-card scene-main"
             animate={{ y: [-5, 8, -5], rotateY: [-2, 3, -2] }}
             transition={{ repeat: Infinity, duration: 7, ease: "easeInOut" }}>
-            <img src="/@fs/root/workspace/amd-experiments/report/figures_v2/fig15_compress_decompress_bw.png"
+            <img src="/content/figures_v2/fig15_compress_decompress_bw.png"
               alt="Compress/Decompress Bandwidth"
               onError={(e) => { e.target.style.display = "none"; }} />
           </motion.div>
           <motion.div className="scene-card scene-left"
             animate={{ y: [10, -8, 10], rotateY: [10, -6, 10] }}
             transition={{ repeat: Infinity, duration: 8.2, ease: "easeInOut" }}>
-            <img src="/@fs/root/workspace/amd-experiments/report/figures_v2/fig14_prefill_comparison.png"
+            <img src="/content/figures_v2/fig14_prefill_comparison.png"
               alt="Prefill comparison"
               onError={(e) => { e.target.style.display = "none"; }} />
           </motion.div>
           <motion.div className="scene-card scene-right"
             animate={{ y: [0, 12, 0], rotateY: [-10, 6, -10] }}
             transition={{ repeat: Infinity, duration: 7.6, ease: "easeInOut" }}>
-            <img src="/@fs/root/workspace/amd-experiments/report/figures_v2/fig12_decode_all_methods.png"
+            <img src="/content/figures_v2/fig12_decode_all_methods.png"
               alt="Decode all methods"
               onError={(e) => { e.target.style.display = "none"; }} />
           </motion.div>
@@ -162,6 +163,7 @@ export default function App() {
         <div className="page-wrap">
           <ProblemSection />
           <MathSection />
+          <CompressionLandscapeSection />
           <ResultsSection />
           <ReasoningSection />
           <ConclusionSection />

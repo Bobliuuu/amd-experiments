@@ -19,6 +19,7 @@ New figures (beyond the original 10):
   Fig 23: KV CACHE COMPRESSION COMPARISON — CACHE COMPRESSION–only bar chart (table lives in report .md)
   Fig 24: Pope (2026) RotorQuant headline claims — CUDA/Metal speedups, params, fidelity (reference JSON)
   Fig 25: MI300X measured vs author CUDA claims — RotorQuant/Turbo deltas
+  Fig 26: Empirical KV validation — calculated vs measured ratio + speed/fidelity vs Turbo
 
 Color scheme (consistent across all figures):
   FP16    = #888888 (gray)
@@ -1239,6 +1240,82 @@ def fig25_mi300x_vs_author_claims(results_dir: Path, output_dir: Path):
     print(f"  Saved: {out}")
 
 
+def fig26_empirical_kv_validation(results_dir: Path, output_dir: Path):
+    """Plot empirical validation artifact: ratio semantics + Turbo-baseline deltas."""
+    path = results_dir / "bench_empirical_kv_validation.json"
+    if not path.exists():
+        print("  Skipped fig26: missing bench_empirical_kv_validation.json")
+        return
+    with open(path) as f:
+        obj = json.load(f)
+    rows = obj.get("results", [])
+    if not rows:
+        print("  Skipped fig26: empty results")
+        return
+
+    # Keep non-turbo methods in deterministic order
+    order = {"planar": 0, "iso": 1, "rotor": 2, "turbo": 3}
+    rows = sorted(rows, key=lambda r: order.get(r.get("method", ""), 99))
+
+    labels = [label(f"{r['method']}3") if r["method"] != "turbo" else "TurboQuant3" for r in rows]
+    calc = [float(r.get("ratio_calculated_layout", 0.0)) for r in rows]
+    obs = [float(r.get("ratio_observed_runtime", 0.0)) for r in rows]
+    c_sp = [float(r.get("compress_speedup_vs_turbo", 1.0)) for r in rows]
+    d_sp = [float(r.get("decompress_speedup_vs_turbo", 1.0)) for r in rows]
+    cos = [float(r.get("cosine_sim_mean", 0.0)) * 100.0 for r in rows]
+    cols = [color(f"{r['method']}3") if r["method"] != "turbo" else color("turbo3") for r in rows]
+
+    fig, axes = plt.subplots(1, 2, figsize=(13, 5.2))
+    fig.suptitle(
+        "Empirical KV compression validation (MI300X): calculated vs measured ratio + Turbo baseline deltas",
+        fontsize=11,
+        fontweight="bold",
+    )
+
+    x = np.arange(len(labels))
+    w = 0.36
+    ax = axes[0]
+    ax.bar(x - w / 2, calc, w, label="ratio_calculated_layout", color="#4C78A8", alpha=0.9)
+    ax.bar(x + w / 2, obs, w, label="ratio_observed_runtime", color="#72B7B2", alpha=0.9)
+    ax.set_title("Ratio semantics")
+    ax.set_ylabel("Compression ratio (× vs FP16)")
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, rotation=18, ha="right")
+    ax.grid(axis="y", alpha=0.3)
+    ax.legend(fontsize=8)
+
+    ax = axes[1]
+    x2 = np.arange(len(labels))
+    w2 = 0.28
+    ax.bar(x2 - w2, c_sp, w2, label="compress_speedup_vs_turbo", color="#F58518", alpha=0.9)
+    ax.bar(x2, d_sp, w2, label="decompress_speedup_vs_turbo", color="#54A24B", alpha=0.9)
+    ax.bar(x2 + w2, [c / 100.0 for c in cos], w2, label="cosine_sim_mean (scaled: %/100)", color="#B279A2", alpha=0.9)
+    ax.set_title("Turbo-baseline deltas + fidelity")
+    ax.set_ylabel("Speedup (×) and scaled cosine")
+    ax.set_xticks(x2)
+    ax.set_xticklabels(labels, rotation=18, ha="right")
+    ax.grid(axis="y", alpha=0.3)
+    ax.legend(fontsize=7, loc="upper left")
+
+    # Annotate fidelity explicitly in percent to avoid scale confusion.
+    for i, v in enumerate(cos):
+        ax.text(i + w2, v / 100.0 + 0.08, f"{v:.2f}%", ha="center", va="bottom", fontsize=7)
+
+    fig.text(
+        0.5,
+        0.01,
+        "Source: results/bench_empirical_kv_validation.json",
+        ha="center",
+        fontsize=8,
+        color="#555555",
+    )
+    plt.tight_layout(rect=[0, 0.04, 1, 0.92])
+    out = output_dir / "fig26_empirical_kv_validation.png"
+    fig.savefig(out, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  Saved: {out}")
+
+
 def generate_deployment_summary_table() -> str:
     """Generate the deployment summary table for the report."""
     return """
@@ -1361,6 +1438,7 @@ def main():
     fig23_kv_cache_compression_comparison(compress_data, output_dir)
     fig24_pope_rotorquant_2026_claims(results_dir, output_dir)
     fig25_mi300x_vs_author_claims(results_dir, output_dir)
+    fig26_empirical_kv_validation(results_dir, output_dir)
 
     print(f"\nAll figures saved to {output_dir}")
     print(f"\n{generate_deployment_summary_table()}")
