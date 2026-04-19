@@ -1120,7 +1120,13 @@ We **completed** the **repository-side** engineering pass on **kv-heavy vLLM dec
 
 ![Fig 31 — Engineering closure vs deployment stack](figures_v2/fig31_repo_engineering_closure_vs_deployment.png)
 
-**Bottom line:** further **batch=1** tok/s is **hipBLASLt + vLLM graph/compile stability + ROCm cadence** on the **customer image**—not additional speculative code in this repo.
+**The tradeoff (plain language).** If you keep **accuracy**, **aggressive KV compression** (TQ3), and **lower KV memory**, you are **not** optimizing the same thing as “maximum batch=1 decode tok/s” on **FP16 KV + stock** attention/GEMM. You are buying **context and HBM headroom**; single-stream tok/s can **legitimately** sit below the uncompressed baseline because **each step still runs the full MLP+matmul stack** (Fig **30**: large **hipBLASLt** share even with TQ).
+
+**Why this is not “bad implementation” anymore — it is largely TurboQuant + Amdahl + stack.** Wiring bugs, GQA issues, bogus paged-attention fallback, and silly fusion ideas were **closed or falsified** (§14.4 table, §14.5 probes). What remains is: **(1)** **Amdahl** — GEMM and paged attention still dominate top-kernel time; **(2)** **TurboQuant’s design** — bytes are bought with **rotation/pack/unpack** cost that code can **ameliorate** but not **zero** without **changing the format or product target**; **(3)** **deployment** — hipBLASLt, graphs, ROCm/vLLM wheel on the **customer image** (Fig **31**).
+
+**Future work — two lanes:** **(A)** **Product mix** — relax compression, different block method, K-only, etc., to **move the Pareto** on purpose. **(B)** **Stack** — upgrade ROCm/PyTorch/vLLM; validate graphs vs `enforce_eager`; always pair with **before/after** rocprof or the same golden kv-heavy recipe.
+
+**Bottom line:** further **batch=1** tok/s is **hipBLASLt + vLLM graph/compile stability + ROCm cadence** on the **customer image**—not additional speculative code in this repo—unless you **change the product mix** in (A).
 
 ---
 

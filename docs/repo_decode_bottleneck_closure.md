@@ -13,6 +13,14 @@ Figures (regenerate with `python3 report/generate_figures_v2.py`):
 - **Fig 30** — `report/figures_v2/fig30_decode_whole_step_rocprof_buckets.png` — top-kernel **time share** on kv-heavy Mistral decode (`results/decode_whole_step_rocprof_bucket_compare.json`).
 - **Fig 31** — `report/figures_v2/fig31_repo_engineering_closure_vs_deployment.png` — **in-repo** vs **outside-repo** handoff table.
 
+### Tradeoff, “implementation,” and TurboQuant itself
+
+**Tradeoff:** Fixing **accuracy**, **strong KV compression** (e.g. TQ3), and **lower KV memory** defines a **different objective** than maximizing **batch=1 decode tok/s** on **FP16 KV + stock** attention/GEMM. You are buying **HBM headroom and context**; you are **not** promised a multiplier on **whole-step** throughput, because each token still runs **MLPs and matmuls** that KV compression does not erase (see §1 and Fig **30**).
+
+**Why the gap is not “unfinished implementation”:** After the closure work, typical wiring bugs, GQA issues, bogus paged-attention gates, and false fusion/quant wins are **closed or measured as regressions**. The remainder is **(i) Amdahl** — large **hipBLASLt** and **attention** buckets even with TQ; **(ii) TurboQuant’s design** — **bytes per vector** are paid for with **rotation + pack/unpack + how attention consumes KV**; code improves **constants**, not that **algebraic/storage choice**, unless you **change the product**; **(iii) deployment** — hipBLASLt, graphs, ROCm/vLLM on the **shipped image** (Fig **31**).
+
+**Future work:** **(A) Product mix** — relax compression, faster block method, K-only, etc., to **move the Pareto** deliberately. **(B) Stack** — upgrade and re-profile on MI300X; validate graphs vs `enforce_eager`. Full prose also lives in **`report/paper.md` §5.14** and **`report/final_report_v2.md` §§14.5–14.6** / **`report/final_report.md` §14.5**.
+
 ---
 
 ## 1. What we proved (evidence, not opinion)
