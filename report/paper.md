@@ -422,6 +422,18 @@ We executed a **deliberate closure pass** inside the benchmark repository: **(i)
 
 **Figures (generated):** `report/generate_figures_v2.py` emits **Fig. 30** (stacked rocprof bucket shares for FP16 vs TurboQuant modes at the summarized kv-heavy configuration) and **Fig. 31** (tabular **in-repo vs outside-repo** handoff). At that configuration, **~43%** of top-kernel time rolls into **`gemm_hipblaslt`** and **~30%** into **`attention_named`**—so **KV compression alone cannot multiply end-to-end tok/s**; the **next gains** are **not** “more Python in this repo” but **validated stack upgrades** on the MI300X image customers ship.
 
+### 5.14 Product tradeoff, TurboQuant as a design constraint (not “unfinished implementation”), and future work
+
+**The tradeoff.** If the product goal is to **preserve accuracy**, keep **aggressive KV compression** (e.g. TQ3’s packed layout and reconstruction quality target), and **reduce KV memory / expand effective context**, then the objective is **not** the same as maximizing **batch=1 decode tok/s** on a **plain FP16 KV cache** with the **stock** attention+GEMM path. Smaller KV improves **capacity, schedulability, and attention-side traffic**; it does **not** remove the **per-token MLP matmuls** and **framework work** that dominate whole-step time once compression is wired—so **worse batch=1 tok/s versus uncompressed FP16** on the same model class is an **expected Pareto move**, not a surprise failure.
+
+**Why this is no longer an implementation problem.** After the closure pass in §5.13, the remaining gap versus “ideal” single-stream speed is **not** primarily “we forgot to wire something.” Typical **implementation** defects—wrong backend registration, GQA shape bugs, spurious fallback to a slower attention implementation, avoidable host sync—were **removed or measured as non-wins**. What remains is **structural**:
+
+1. **Amdahl (whole step):** kv-heavy rocprof rollups still show **large `gemm_hipblaslt` and paged-attention buckets** for **both** FP16 and TurboQuant modes. **TurboQuant does not delete GEMM time**; it changes **how KV is stored and consumed**. Improving KV/attention moves a **fraction** of the step, bounded by those buckets.
+2. **TurboQuant itself:** the method **buys bytes** with **rotation + quantization + pack/unpack** (see §6.2’s FMA discussion). Implementation can **lower constants** (fused attention, better Triton, fewer CPU round-trips); it cannot **eliminate** the cost of **that representation** without **changing the algorithm or the bit budget**—that is a **restriction of the TurboQuant design and quality target**, not a missing `if` statement in this repository.
+3. **Stack and deployment:** hipBLASLt behavior, CUDA graph / piecewise compile stability on ROCm+vLLM, and driver cadence are **owned by the shipped image**, not by further speculative Python in the benchmark tree.
+
+**Future work (two lanes).** **(A) Product mix** — deliberately move the Pareto: e.g. relax KV width (FP8), use a **faster-decompress** block method at a comparable bit budget, K-only vs symmetric K+V, or accept different quality/compression tradeoffs. **(B) Stack and ops** — upgrade and re-profile ROCm / PyTorch / vLLM on MI300X; validate graph capture vs `enforce_eager`; treat each change with **before/after** rocprof or the same golden kv-heavy recipe so gains are **attributed**, not hoped for.
+
 ---
 
 ## 6. Analysis

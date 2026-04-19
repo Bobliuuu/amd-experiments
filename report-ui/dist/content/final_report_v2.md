@@ -553,6 +553,23 @@ Rocprof-aligned top-kernel buckets (`results/decode_whole_step_rocprof_bucket_co
 
 **This repository is complete** for the scoped goal: **wire TurboQuant correctly**, **profile truthfully**, **remove bogus gates**, **micro-optimize the bridge**, and **document** what must move on **MI300X operators’** ROCm/vLLM images. **Further throughput** is **not** “one more small tweak” in `amd-experiments`; it is **stack integration** with **before/after rocprof** on the **same** wheel and driver pin.
 
+### 14.5 The tradeoff — and why it is **not** “we should implement TurboQuant better”
+
+**What you are optimizing.** Keeping **accuracy**, **strong KV compression** (TQ3-style byte layout and quality bar), and **lower KV memory / more effective context** is a **different objective** than maximizing **batch=1 decode tok/s** against a **plain FP16 KV** + **stock** attention/GEMM stack. The first objective **buys HBM headroom and capacity**; it does **not** promise to **multiply whole-step tok/s**, because each decode step still pays for **MLPs, projections, and framework** unless you change the model or the stack.
+
+**Why the remaining gap is not an implementation problem.** After §14.2–14.3, the usual engineering failures (unwired backend, GQA bugs, bogus ROCm paged-attention disable, bridge CPU sync on uniform batches, bad fusion/quant hypotheses) are **closed or falsified**. What is left is:
+
+- **Amdahl:** Fig **30** and `decode_whole_step_rocprof_bucket_compare.json` show **large hipBLASLt and attention buckets** for FP16 **and** TurboQuant—**KV compression does not remove GEMM work**.
+- **TurboQuant as a binding constraint:** TQ **trades bytes for rotation/pack/unpack and attention-side consumption** (see §1.1 / §6.2 in `report/paper.md` for FMA and kernel story). Code can **shrink overhead**; it cannot **delete** that trade **without changing the TurboQuant product** (bit width, deferred K, different method).
+- **Deployment:** Further single-stream tok/s is **ROCm + vLLM + hipBLASLt + graphs** on the **customer image**—Fig **31**.
+
+So the accurate statement is: **worse batch=1 tok/s vs uncompressed FP16 is largely the chosen product tradeoff plus whole-step Amdahl**, not a signal that “the repo did not finish implementing TurboQuant.”
+
+### 14.6 Future work — two lanes
+
+1. **Change the product mix (on purpose):** relax KV compression (e.g. FP8), switch to a **faster** block rotation family at a similar bit budget, K-only vs full K+V, or move quality/compression targets—each is a **deliberate** move on the Pareto curve.
+2. **Change the shipped stack:** ROCm / PyTorch / vLLM upgrades, hipBLASLt behavior, graph capture vs `enforce_eager`—each validated with **before/after** rocprof or the same golden kv-heavy JSON so wins are **attributed** to the image, not to more benchmark glue.
+
 ---
 
 ## Appendix A: Compression Ratio Derivation
