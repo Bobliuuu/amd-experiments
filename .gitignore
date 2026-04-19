@@ -32,3 +32,6 @@ kernels/hip/tq_bench_mi300x
 .venv-vllm-rocm
 
 report-ui/node_modules/
+
+.benchmark_mi300_vllm_frozen/
+.cursor

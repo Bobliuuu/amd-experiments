@@ -2,7 +2,7 @@
 
 **Hardware**: AMD Instinct MI300X VF (gfx942, 192 GB HBM3, 5.3 TB/s)  
 **Model**: Mistral-7B-v0.1 (32L × 32Qh/8KVh × 128d, 7.2B params)  
-**Software**: ROCm 7.2 / PyTorch 2.5.1+rocm6.2 / transformers 5.5.3
+**Software**: ROCm 7.2 Primus / PyTorch 2.10 / transformers 5.5.3
 
 ---
 

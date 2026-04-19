@@ -7,8 +7,17 @@ This directory contains runnable benchmark entry points for throughput, latency,
 Run all commands from repo root unless noted:
 
 ```bash
-cd /root/workspace/amd-experiments
+cd /path/to/amd-experiments
 ```
+
+## Python interpreter (MI300X / ROCm)
+
+GPU and vLLM benchmarks in this repo are expected to use the **locked** ROCm torch + vLLM venv:
+
+- **Activate:** `source "$REPO/.benchmark_mi300_vllm_frozen/.venv/bin/activate"`
+- **Or explicit binary:** `"$REPO/.benchmark_mi300_vllm_frozen/.venv/bin/python" benchmarks/<script>.py`
+
+Full procedure, ACK env vars, and snapshot archives: **`docs/benchmark_mi300_locked_env.md`**. Do not assume **`python3`** on `PATH` matches that stack.
 
 ## Common Quick Runs
 

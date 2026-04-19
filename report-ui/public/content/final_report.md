@@ -2,7 +2,7 @@
 ## Technical Report — April 2026
 
 **Hardware**: AMD Instinct MI300X VF (gfx942:sramecc+:xnack-, 192 GB HBM3, 5.3 TB/s)  
-**Software**: ROCm 7.2, PyTorch 2.5.1+rocm6.2, transformers 5.5.3, Triton 3.1.0, Python 3.12  
+**Software:** **ROCm 7.2** Primus (`docker_run_amd_mi300x.sh` / `rocm/primus:v26.2`), **PyTorch 2.10**, Triton 3.x, Python 3.12 — used for Split-K attention reruns, GQA fused-decode validation, HuggingFace Table 1–style decode baselines, vLLM A/B JSON in `results/`, and all current MI300X artifacts.  
 **Model**: Mistral-7B-v0.1 (32 layers, 32 query heads, 8 KV heads, head_dim=128)
 
 ---
@@ -13,6 +13,15 @@ We present a hardware-aware adaptation of TurboQuant KV cache compression for AM
 validated end-to-end on the MI300X (gfx942). All benchmarks have been confirmed to run
 correctly with the latest transformers 5.5.3 API.
 
+### Cache Compression First (headline)
+
+| Compression headline | Result |
+|---|---|
+| Symmetric K+V in **upstream** llama.cpp headline table | **10.3×** (IsoQuant, PlanarQuant, **TurboQuant** dtypes there — **not** MI300X measured) |
+| Same table, K-only style row | **5.1×** (PlanarQuant **3-bit K** + FP16 **V**, ~FP16 PPL) |
+| TurboQuant in *this* MI300X report (PyTorch TQ3 layout) | **4.923×** vs FP16 KV |
+| Baseline | **1.0×** (FP16 K + FP16 V) |
+
 | Contribution | Result |
 |---|---|
 | MI300X-native TurboQuant HIP library | 16/16 validation tests pass, cosine sim ≥ 0.967 |
@@ -22,16 +31,154 @@ correctly with the latest transformers 5.5.3 API.
 | TQ3 end-to-end decode | **4.923× KV compression** confirmed, FP16 baseline 44–46 tok/s |
 | TQ3 max context projection | **~6,659K tokens** on MI300X vs ~1,353K for FP16 (4.92× more) |
 
-| Triton fused TQ3 kernel v2 | **2.0× faster (bit-plane) / 2.6× faster (nibble) vs v1**; gap vs FP16: **~3× / ~2.3×** (was 6×) |
-| vLLM TQ3 attention backend | Drop-in `TurboQuantROCmAttentionBackend` with paged TQ3 KV cache |
+| Triton fused TQ3 kernel v2 | **2.0× faster (bit-plane) / 2.6× faster (nibble) vs v1**; isolated Split-K fused op **beats FP16 SDPA beyond ~16K** tokens (`report/paper.md` §5.10) |
+| vLLM TQ3 wiring | `tq_backends/attention/backends/rocm_flash_attn.py` + `scripts/install_turboquant_vllm_backend.sh` + `docs/vllm_turboquant_wiring.md`; **GQA fused decode** (`expand_tq_compressed_for_gqa`); microbench `results/bench_tq_gqa_decode_sweep.json` |
 | Llama-3-70B capacity analysis | TQ3 extends 70B context from ~156K → ~769K tokens on 192 GB |
-| Batch decode BW model | TQ3 speedup ~4.58× at batch=64, seq=32K (bandwidth-bottleneck regime) |
+| vLLM Mistral-7B A/B (kv-heavy) | `results/bench_vllm_turboquant_ab_sweep_kv_heavy.json`: **FP16 ≈ TQ decompress ≈ TQ fused** output tok/s — **KV does not unlock end-to-end decode** when the rest of the step stays heavy |
+| **Repository closure (Apr 2026)** | **§14.5**, **Fig 30–31**, [`docs/repo_decode_bottleneck_closure.md`](../docs/repo_decode_bottleneck_closure.md) — every defensible **in-repo** lever executed; remaining batch=1 tok/s is **ROCm + vLLM + hipBLASLt** on the shipped image |
 
-**Key insight**: TQ3 achieves the best compression ratio (4.923× vs FP16) while maintaining
+**Key insight**: In the MI300X TurboQuant implementation in this report, TQ3 achieves
+4.923× compression vs FP16 while maintaining
 high reconstruction quality (cosine sim = 0.9831). The Triton fused kernel is numerically exact
-and delivers 1.87–2.56× throughput improvement over the Python wrapper. The vLLM integration
-enables production serving with TQ3 KV cache at batch≥16, where the 4.92× compression yields
-near-linear throughput improvement in the bandwidth-bottleneck regime.
+and delivers large wins over the Python decompress path on **attention-isolated** benchmarks (including **~6–7.5×** fused vs decompress+SDPA on GQA decode paths in `results/bench_tq_gqa_decode_sweep.json`). **End-to-end serving tok/s** in our vLLM-style Mistral runs does **not** separate from FP16 — the **full decode step** (weights, MLP, framework) **caps throughput** even with a **production-shaped** TurboQuant backend. The durable production wins are **HBM capacity / max context**, **fast block-method prefill**, and **operator-level** attention latency where the stack exposes it—not an automatic multiplier on wall-clock tok/s.
+
+## Headline Compression Comparisons
+
+### External reference table (not measured on MI300X)
+
+The rows below are **not** from this lab’s hardware. They are transcribed from the **RotorQuant / llama.cpp** documentation (published comparison for **Llama 3.1 8B Instruct Q4_K_M**, often labeled with an **RTX 5090** in the upstream README). **We do not have an RTX 5090**; this block is included only as a **third-party headline** for how those stacks report decode/prefill/PPL **when KV uses their dtypes** (`iso3`, `planar3`, `turbo3`). All MI300X numbers elsewhere in this report are separate measurements.
+
+**Why `turbo3/turbo3` shows 10.3× but our TurboQuant (TQ3) is 4.923×:** Compression ratio is **bytes-on-wire for one KV head vector**, not the algorithm name alone. In **this** repository, TurboQuant 3-bit uses the layout in §3.1 (**52 B / 128-dim vector** → **256/52 ≈ 4.923×** vs FP16). The **llama.cpp `turbo3`** row uses **their** packed KV layout for that dtype, which the upstream table summarizes as **~10.3×** for symmetric 3-bit K+V **in the same column as `iso3`/`planar3`**. So **10.3× and 4.923× are two different storage formats**, both loosely “TurboQuant 3-bit” in different codebases — not a single universal ratio.
+
+### Symmetric 3-bit K+V (upstream table, model + GPU as cited there)
+
+**What the names mean:** In llama.cpp / RotorQuant README these rows are labeled `iso3`, `planar3`, `turbo3`. The digit is the **bit width** (3-bit KV after each method’s rotation). **TurboQuant** is the **`turbo3`** line in that stack. **IsoQuant** ↔ `iso3`, **PlanarQuant** ↔ `planar3`. Readable names below; dtype strings in the second column.
+
+| Keys / Values | llama.cpp dtype | Decode tok/s | Prefill tok/s | PPL (wiki-2) | vs FP16 | Compression |
+|---|---|---:|---:|---:|---:|---:|
+| FP16 / FP16 | `f16/f16` | 140 | 6,156 | 6.63 | baseline | 1.0× |
+| IsoQuant (3-bit) / IsoQuant (3-bit) | `iso3/iso3` | 118 | 3,397 | 6.91 | +4.2% | 10.3× |
+| PlanarQuant (3-bit) / PlanarQuant (3-bit) | `planar3/planar3` | 119 | 3,822 | 7.05 | +6.3% | 10.3× |
+| **TurboQuant (3-bit) / TurboQuant (3-bit)** | `turbo3/turbo3` | 93 | 722 | 7.07 | +6.6% | 10.3× |
+| PlanarQuant (3-bit) / TurboQuant (3-bit) | `planar3/turbo3` | 127 | — | 6.68 | +0.8% | 10.3× |
+| PlanarQuant (3-bit) K + FP16 V | `planar3/f16` | 134 | — | ~6.63 | ~0% | 5.1× |
+
+*RotorQuant does not appear in this upstream table. On MI300X, RotorQuant is benchmarked in the v2 report body alongside PlanarQuant, IsoQuant, and TurboQuant.*
+
+![Headline Compression Comparisons](figures/fig11_headline_comparison.png)
+
+### Headline results (who is better)
+
+- Symmetric 10.3× compression — speed: **PlanarQuant** and **IsoQuant** (both 3-bit K+V) are much faster than **TurboQuant** (3-bit K+V).
+- Symmetric 10.3× compression — quality (PPL): **IsoQuant** edges **PlanarQuant** and **TurboQuant** among fully compressed K+V rows.
+- Symmetric 10.3× compression — prefill: **PlanarQuant** (`3,822 tok/s`) is fastest; **TurboQuant** (`722 tok/s`) is slowest.
+- Best practical quality/memory tradeoff: **PlanarQuant** 3-bit **K** + FP16 **V** (`planar3/f16`) keeps near-FP16 quality (~0% PPL delta) at **5.1×** compression.
+- In **this external table only**, symmetric rows share the upstream **10.3×** figure for that layout. **TurboQuant** is not best-in-class there on decode, prefill, or PPL. **Our** measured TurboQuant path is **TQ3 at 4.923×** (§3.1–3.2) — different format, different ratio; do not merge the two into one number.
+
+---
+
+## Headline Compression Comparisons
+
+### External reference table (not measured on MI300X)
+
+The rows below are **not** from this lab’s hardware. They are transcribed from the **RotorQuant / llama.cpp** documentation (published comparison for **Llama 3.1 8B Instruct Q4_K_M**, often labeled with an **RTX 5090** in the upstream README). **We do not have an RTX 5090**; this block is included only as a **third-party headline** for how those stacks report decode/prefill/PPL **when KV uses their dtypes** (`iso3`, `planar3`, `turbo3`). All MI300X numbers elsewhere in this report are separate measurements.
+
+**Why `turbo3/turbo3` shows 10.3× but our TurboQuant (TQ3) is 4.923×:** Compression ratio is **bytes-on-wire for one KV head vector**, not the algorithm name alone. In **this** repository, TurboQuant 3-bit uses the layout in §3.1 (**52 B / 128-dim vector** → **256/52 ≈ 4.923×** vs FP16). The **llama.cpp `turbo3`** row uses **their** packed KV layout for that dtype, which the upstream table summarizes as **~10.3×** for symmetric 3-bit K+V **in the same column as `iso3`/`planar3`**. So **10.3× and 4.923× are two different storage formats**, both loosely “TurboQuant 3-bit” in different codebases — not a single universal ratio.
+
+### Symmetric 3-bit K+V (upstream table, model + GPU as cited there)
+
+**What the names mean:** In llama.cpp / RotorQuant README these rows are labeled `iso3`, `planar3`, `turbo3`. The digit is the **bit width** (3-bit KV after each method’s rotation). **TurboQuant** is the **`turbo3`** line in that stack. **IsoQuant** ↔ `iso3`, **PlanarQuant** ↔ `planar3`. Readable names below; dtype strings in the second column.
+
+| Keys / Values | llama.cpp dtype | Decode tok/s | Prefill tok/s | PPL (wiki-2) | vs FP16 | Compression |
+|---|---|---:|---:|---:|---:|---:|
+| FP16 / FP16 | `f16/f16` | 140 | 6,156 | 6.63 | baseline | 1.0× |
+| IsoQuant (3-bit) / IsoQuant (3-bit) | `iso3/iso3` | 118 | 3,397 | 6.91 | +4.2% | 10.3× |
+| PlanarQuant (3-bit) / PlanarQuant (3-bit) | `planar3/planar3` | 119 | 3,822 | 7.05 | +6.3% | 10.3× |
+| **TurboQuant (3-bit) / TurboQuant (3-bit)** | `turbo3/turbo3` | 93 | 722 | 7.07 | +6.6% | 10.3× |
+| PlanarQuant (3-bit) / TurboQuant (3-bit) | `planar3/turbo3` | 127 | — | 6.68 | +0.8% | 10.3× |
+| PlanarQuant (3-bit) K + FP16 V | `planar3/f16` | 134 | — | ~6.63 | ~0% | 5.1× |
+
+*RotorQuant does not appear in this upstream table. On MI300X, RotorQuant is benchmarked in the v2 report body alongside PlanarQuant, IsoQuant, and TurboQuant.*
+
+![Headline Compression Comparisons](figures/fig11_headline_comparison.png)
+
+### Headline results (who is better)
+
+- Symmetric 10.3× compression — speed: **PlanarQuant** and **IsoQuant** (both 3-bit K+V) are much faster than **TurboQuant** (3-bit K+V).
+- Symmetric 10.3× compression — quality (PPL): **IsoQuant** edges **PlanarQuant** and **TurboQuant** among fully compressed K+V rows.
+- Symmetric 10.3× compression — prefill: **PlanarQuant** (`3,822 tok/s`) is fastest; **TurboQuant** (`722 tok/s`) is slowest.
+- Best practical quality/memory tradeoff: **PlanarQuant** 3-bit **K** + FP16 **V** (`planar3/f16`) keeps near-FP16 quality (~0% PPL delta) at **5.1×** compression.
+- In **this external table only**, symmetric rows share the upstream **10.3×** figure for that layout. **TurboQuant** is not best-in-class there on decode, prefill, or PPL. **Our** measured TurboQuant path is **TQ3 at 4.923×** (§3.1–3.2) — different format, different ratio; do not merge the two into one number.
+
+---
+
+## Headline Compression Comparisons
+
+### External reference table (not measured on MI300X)
+
+The rows below are **not** from this lab’s hardware. They are transcribed from the **RotorQuant / llama.cpp** documentation (published comparison for **Llama 3.1 8B Instruct Q4_K_M**, often labeled with an **RTX 5090** in the upstream README). **We do not have an RTX 5090**; this block is included only as a **third-party headline** for how those stacks report decode/prefill/PPL **when KV uses their dtypes** (`iso3`, `planar3`, `turbo3`). All MI300X numbers elsewhere in this report are separate measurements.
+
+**Why `turbo3/turbo3` shows 10.3× but our TurboQuant (TQ3) is 4.923×:** Compression ratio is **bytes-on-wire for one KV head vector**, not the algorithm name alone. In **this** repository, TurboQuant 3-bit uses the layout in §3.1 (**52 B / 128-dim vector** → **256/52 ≈ 4.923×** vs FP16). The **llama.cpp `turbo3`** row uses **their** packed KV layout for that dtype, which the upstream table summarizes as **~10.3×** for symmetric 3-bit K+V **in the same column as `iso3`/`planar3`**. So **10.3× and 4.923× are two different storage formats**, both loosely “TurboQuant 3-bit” in different codebases — not a single universal ratio.
+
+### Symmetric 3-bit K+V (upstream table, model + GPU as cited there)
+
+**What the names mean:** In llama.cpp / RotorQuant README these rows are labeled `iso3`, `planar3`, `turbo3`. The digit is the **bit width** (3-bit KV after each method’s rotation). **TurboQuant** is the **`turbo3`** line in that stack. **IsoQuant** ↔ `iso3`, **PlanarQuant** ↔ `planar3`. Readable names below; dtype strings in the second column.
+
+| Keys / Values | llama.cpp dtype | Decode tok/s | Prefill tok/s | PPL (wiki-2) | vs FP16 | Compression |
+|---|---|---:|---:|---:|---:|---:|
+| FP16 / FP16 | `f16/f16` | 140 | 6,156 | 6.63 | baseline | 1.0× |
+| IsoQuant (3-bit) / IsoQuant (3-bit) | `iso3/iso3` | 118 | 3,397 | 6.91 | +4.2% | 10.3× |
+| PlanarQuant (3-bit) / PlanarQuant (3-bit) | `planar3/planar3` | 119 | 3,822 | 7.05 | +6.3% | 10.3× |
+| **TurboQuant (3-bit) / TurboQuant (3-bit)** | `turbo3/turbo3` | 93 | 722 | 7.07 | +6.6% | 10.3× |
+| PlanarQuant (3-bit) / TurboQuant (3-bit) | `planar3/turbo3` | 127 | — | 6.68 | +0.8% | 10.3× |
+| PlanarQuant (3-bit) K + FP16 V | `planar3/f16` | 134 | — | ~6.63 | ~0% | 5.1× |
+
+*RotorQuant does not appear in this upstream table. On MI300X, RotorQuant is benchmarked in the v2 report body alongside PlanarQuant, IsoQuant, and TurboQuant.*
+
+![Headline Compression Comparisons](figures/fig11_headline_comparison.png)
+
+### Headline results (who is better)
+
+- Symmetric 10.3× compression — speed: **PlanarQuant** and **IsoQuant** (both 3-bit K+V) are much faster than **TurboQuant** (3-bit K+V).
+- Symmetric 10.3× compression — quality (PPL): **IsoQuant** edges **PlanarQuant** and **TurboQuant** among fully compressed K+V rows.
+- Symmetric 10.3× compression — prefill: **PlanarQuant** (`3,822 tok/s`) is fastest; **TurboQuant** (`722 tok/s`) is slowest.
+- Best practical quality/memory tradeoff: **PlanarQuant** 3-bit **K** + FP16 **V** (`planar3/f16`) keeps near-FP16 quality (~0% PPL delta) at **5.1×** compression.
+- In **this external table only**, symmetric rows share the upstream **10.3×** figure for that layout. **TurboQuant** is not best-in-class there on decode, prefill, or PPL. **Our** measured TurboQuant path is **TQ3 at 4.923×** (§3.1–3.2) — different format, different ratio; do not merge the two into one number.
+
+---
+
+## Headline Compression Comparisons
+
+### External reference table (not measured on MI300X)
+
+The rows below are **not** from this lab’s hardware. They are transcribed from the **RotorQuant / llama.cpp** documentation (published comparison for **Llama 3.1 8B Instruct Q4_K_M**, often labeled with an **RTX 5090** in the upstream README). **We do not have an RTX 5090**; this block is included only as a **third-party headline** for how those stacks report decode/prefill/PPL **when KV uses their dtypes** (`iso3`, `planar3`, `turbo3`). All MI300X numbers elsewhere in this report are separate measurements.
+
+**Why `turbo3/turbo3` shows 10.3× but our TurboQuant (TQ3) is 4.923×:** Compression ratio is **bytes-on-wire for one KV head vector**, not the algorithm name alone. In **this** repository, TurboQuant 3-bit uses the layout in §3.1 (**52 B / 128-dim vector** → **256/52 ≈ 4.923×** vs FP16). The **llama.cpp `turbo3`** row uses **their** packed KV layout for that dtype, which the upstream table summarizes as **~10.3×** for symmetric 3-bit K+V **in the same column as `iso3`/`planar3`**. So **10.3× and 4.923× are two different storage formats**, both loosely “TurboQuant 3-bit” in different codebases — not a single universal ratio.
+
+### Symmetric 3-bit K+V (upstream table, model + GPU as cited there)
+
+**What the names mean:** In llama.cpp / RotorQuant README these rows are labeled `iso3`, `planar3`, `turbo3`. The digit is the **bit width** (3-bit KV after each method’s rotation). **TurboQuant** is the **`turbo3`** line in that stack. **IsoQuant** ↔ `iso3`, **PlanarQuant** ↔ `planar3`. Readable names below; dtype strings in the second column.
+
+| Keys / Values | llama.cpp dtype | Decode tok/s | Prefill tok/s | PPL (wiki-2) | vs FP16 | Compression |
+|---|---|---:|---:|---:|---:|---:|
+| FP16 / FP16 | `f16/f16` | 140 | 6,156 | 6.63 | baseline | 1.0× |
+| IsoQuant (3-bit) / IsoQuant (3-bit) | `iso3/iso3` | 118 | 3,397 | 6.91 | +4.2% | 10.3× |
+| PlanarQuant (3-bit) / PlanarQuant (3-bit) | `planar3/planar3` | 119 | 3,822 | 7.05 | +6.3% | 10.3× |
+| **TurboQuant (3-bit) / TurboQuant (3-bit)** | `turbo3/turbo3` | 93 | 722 | 7.07 | +6.6% | 10.3× |
+| PlanarQuant (3-bit) / TurboQuant (3-bit) | `planar3/turbo3` | 127 | — | 6.68 | +0.8% | 10.3× |
+| PlanarQuant (3-bit) K + FP16 V | `planar3/f16` | 134 | — | ~6.63 | ~0% | 5.1× |
+
+*RotorQuant does not appear in this upstream table. On MI300X, RotorQuant is benchmarked in the v2 report body alongside PlanarQuant, IsoQuant, and TurboQuant.*
+
+![Headline Compression Comparisons](figures/fig11_headline_comparison.png)
+
+### Headline results (who is better)
+
+- Symmetric 10.3× compression — speed: **PlanarQuant** and **IsoQuant** (both 3-bit K+V) are much faster than **TurboQuant** (3-bit K+V).
+- Symmetric 10.3× compression — quality (PPL): **IsoQuant** edges **PlanarQuant** and **TurboQuant** among fully compressed K+V rows.
+- Symmetric 10.3× compression — prefill: **PlanarQuant** (`3,822 tok/s`) is fastest; **TurboQuant** (`722 tok/s`) is slowest.
+- Best practical quality/memory tradeoff: **PlanarQuant** 3-bit **K** + FP16 **V** (`planar3/f16`) keeps near-FP16 quality (~0% PPL delta) at **5.1×** compression.
+- In **this external table only**, symmetric rows share the upstream **10.3×** figure for that layout. **TurboQuant** is not best-in-class there on decode, prefill, or PPL. **Our** measured TurboQuant path is **TQ3 at 4.923×** (§3.1–3.2) — different format, different ratio; do not merge the two into one number.
 
 ---
 
@@ -47,7 +194,7 @@ For Mistral-7B at 131K context, FP16 KV cache consumes ~**16 GB** of HBM3 at ste
 | KV cache (FP16, 131K) | **~16.0 GB** | **~16.0 GB/step** |
 | KV cache (TQ3, 131K) | **~3.3 GB** | **~3.3 GB/step** |
 
-At long contexts the KV cache read dominates attention, making compression critical.
+At long contexts the **KV cache is large in bytes**, but **batch=1 end-to-end decode** in our HuggingFace runs stays **near-flat ~46 tok/s** because **weight + MLP work dominates the step**, not KV DRAM bandwidth alone (see `report/paper.md` §6.1). Compression remains **critical for fitting context** and for **prefill / attention-operator** tradeoffs, not automatically for **aggregate decode tok/s**.
 
 *Note: Peak VRAM measured at 106.9 GB for FP16 + 131K context. This is inflated by
 prefill activation buffers (hidden states across 32 layers ≈ 32 × 131K × 4096 × 2B ≈ 34 GB)
@@ -101,17 +248,13 @@ The rotation Gaussianizes the coordinate distribution, making Lloyd-Max near-opt
 | Memory bandwidth | 5.3 TB/s |
 | Wavefront size | Wave64 (64 threads/wavefront) |
 | Matrix units | MFMA (CDNA3, `mfma_f32_16x16x16f16`) |
-| ROCm | 7.2 compiler / 6.2 PyTorch runtime |
+| ROCm | **7.2** in Primus (`rocm/primus:v26.2`) — canonical stack for all MI300X work |
 
-### 4.2 ROCm Version Constraint
+### 4.2 HIP / code-object alignment (Primus)
 
-The system has an ABI mismatch between:
-- **Compiler**: ROCm 7.2 `hipcc` (code object version 6, COV6)
-- **Runtime**: PyTorch bundles ROCm 6.2 `libamdhip64.so` (expects COV5)
+**PyTorch’s in-process HIP runtime** (the `libamdhip64.so` loaded with the interpreter) may expect **COV5** code objects while a **system** `hipcc` defaults to **COV6** on ROCm 7.2 toolchains. Loading mismatched HSACO into the same process can surface **HIP error 209**.
 
-HIP fat-binary ABI incompatibility causes error 209 when loading ROCm 7.2 kernels
-into the PyTorch process. **Resolution**: All Python inference uses pure PyTorch
-(`torch.matmul` → rocBLAS → MFMA). The standalone HIP binary uses ROCm 7.2 directly.
+**Resolution used in this repo:** build and run inside **`docker_run_amd_mi300x.sh`** / **`rocm/primus:v26.2`**, where **ROCm 7.2 + PyTorch 2.10** are aligned. For custom HIP: compile with **`-mcode-object-version=5`** when targeting the same HIP runtime as the Python process, or route hot paths through **Triton** / **pure PyTorch** to avoid manual HSACO loads.
 
 ### 4.3 Wave64 Ballot Advantage
 
@@ -227,7 +370,6 @@ not the KV cache itself. Steady-state decode VRAM would be ~30 GB.*
 ### 5.5 Maximum Context Length on MI300X
 
 ![Maximum Context](figures/fig9_max_context.png)
-|| [Fig 10](figures/fig10_triton_speedup.png) | **Triton fused TQ3: measured speedup vs FP16 and Python wrapper** |
 
 *Available VRAM for KV: 192 GB − 14.7 GB (model weights) = 177.3 GB*  
 *KV bytes per token (Mistral-7B): 32 layers × 2 × 8 KV-heads × 128 dim × 2B = 131,072 B/token*
@@ -313,6 +455,33 @@ CDNA3 vs 4 cycles for VALU). The gather dominated, not the memory bandwidth.
 
 ### 5.9 Optimized Triton Kernel v2 — VALU-only Dequant
 
+![Fused Attention: Triton TQ3 vs FP16 Baseline](figures/fig10_triton_speedup.png)
+
+*How close to FP16 baseline (batch=1 decode): the best fused kernel (TQ3 nibble v2) reaches
+~**0.43–0.45x** of FP16 across 4K-131K context, i.e. about **2.3x slower** than FP16 (improved
+from ~6x slower in v1).*
+
+### 5.9.1 Split-K Update (new): long-context crossover at batch=1
+
+![Normalized Fused Attention vs FP16 (Split-K)](figures/fig12_fused_vs_fp16_normalized.png)
+
+*New measurement with Split-K sequence parallelism enabled in the fused bit-plane kernel
+(`turboquant_attention_fwd(..., use_split_k=True)`): short contexts remain below FP16, but
+the fused kernel reaches parity near 16K and overtakes FP16 at 32K+ context.*
+
+| seq_k | FP16 (ms) | Python TQ3 (ms) | Fused TQ3 Split-K (ms) | Fused vs FP16 |
+|-------|-----------|-----------------|-------------------------|---------------|
+| 1,024 | 0.054 | 0.912 | 0.155 | 0.35× |
+| 4,096 | 0.188 | 2.338 | 0.485 | 0.39× |
+| 16,384 | 0.725 | 9.409 | 0.729 | 1.00× |
+| 32,768 | 1.534 | 18.560 | 1.336 | 1.15× |
+| 65,536 | 3.058 | 36.681 | 2.063 | 1.48× |
+| 131,072 | 6.109 | 73.462 | 3.289 | 1.86× |
+
+This update changes the practical takeaway: the fused path is no longer only a "still slower"
+story at batch=1. With enough sequence length, exposing sequence-parallel work allows the TQ3
+kernel to convert KV byte reduction into real wall-clock speedup versus FP16.
+
 **Root-cause analysis of the 6× gap:**
 
 The attention matmul at decode (1 query token × S_k) is inherently tiny — at 131K context,
@@ -388,7 +557,7 @@ The v2 kernels halve / cut by 3× the gap vs FP16 at batch=1. The remaining gap 
 **physically unavoidable at batch=1**: FP16 SDPA (rocBLAS Flash Attention) runs at ~350 GB/s
 effective bandwidth, reading the KV cache at near-saturated HBM throughput. TQ3 reduces
 the bytes read by 4.9×, but the dequantization arithmetic still costs ~2.3× in wall time.
-The crossover happens at batch > 1 as described in Section 5.10.
+Split-K fused TQ3 **does** beat FP16 SDPA in **isolated** attention beyond ~16K tokens (`report/paper.md` §5.10); the tables in **this** subsection are a **different** historical microbench (TQ3-BP/NB vs FP16) and must not be read as end-to-end claims.
 
 **What would close the remaining gap:**
 
@@ -397,14 +566,13 @@ The crossover happens at batch > 1 as described in Section 5.10.
    pre-scaled to INT8, the dot product is free in the matrix unit with no dequant step.
    This requires expressing the entire attention in the quantized domain — a significant
    kernel redesign, but eliminates the compute gap entirely.
-2. **Batch > 1**: Covered in Section 5.10. At batch=4–8 with seq≥32K, TQ3 is already
-   faster than FP16 because KV bandwidth dominates.
+2. **End-to-end stack**: Even with fused GQA decode + vLLM wiring (`docs/vllm_turboquant_wiring.md`), **`bench_vllm_turboquant_ab_sweep_kv_heavy.json`** shows **no tok/s uplift** vs FP16 — the rest of the decode step stays heavy (§5.10 narrative below).
 
 ---
 
-### 5.10 Batch Scaling: Why batch=1 Is Special and batch>1 Is Where TQ3 Wins
+### 5.10 Batch scaling: weight reads, KV bytes, and what we actually measured
 
-This section explains the batch=1 penalty and how increasing batch size changes the picture.
+This section separates **byte accounting** (when KV traffic rivals weights), **attention-only kernel tables** (below), and **full-model / vLLM** results — they do not all imply the same “winner.”
 
 #### Two Bottlenecks, Two Regimes
 
@@ -421,11 +589,9 @@ Per decode step, HBM reads =  Model weights  +  KV cache
 | KV cache — FP16, seq=32K | 0.54 GB / batch elem | batch size |
 | KV cache — TQ3, seq=32K | 0.11 GB / batch elem | batch size |
 
-**At batch=1** the 14 GB weight read completely dominates. The entire decode step takes ~21 ms regardless of context length (measured: 46 tok/s flat at all seq_lens). TQ3 can only touch the 0.54 GB KV read, which is 2.5% of the total. Even perfect compression saves almost nothing — and TQ3's dequantization compute adds overhead. Result: TQ3 is slower at batch=1.
+**At batch=1** the ~14 GB weight read dominates the **per-step byte budget** for end-to-end decode. Measured HuggingFace decode stays **~46 tok/s flat** from 2K–131K context (`report/paper.md` Table 1): **KV compression does not unlock aggregate tok/s** when weights + MLP + framework dominate.
 
-**At batch≥4 (seq=32K)** the KV reads start to match weight reads. KV = 4 × 0.54 GB = 2.16 GB vs weight = 14 GB: KV is now 13% of the total. TQ3 saves 4.9× on that 13%, giving a modest ~15% end-to-end speedup. The crossover where KV > weight reads is around batch ≈ 14/0.54 ≈ **26 for seq=32K** (KV bandwidth equals weight bandwidth).
-
-**At large batch** everything becomes KV-bandwidth-limited and TQ3's 4.9× compression converts directly to ~4× more tokens/sec.
+**Theoretical where KV bytes rival weights** (same order-of-magnitude model as `report/paper.md` §5.9): batch\* ≈ *W_bytes / KV_bytes_per_seq* → **~26 @ seq≈4K**, **~6.5 @ seq≈16K** for Mistral-scale FP16 KV. Above that point FP16 *attention* would be *more* KV-bandwidth-heavy in a pencil-and-paper bandwidth model — but **measured** multi-query decode with **Python-style decompress** still hits a **decompress compute wall** (Table 9 in the paper; `bench_batch_decode_v2.py`), and **vLLM A/B** on Mistral (`results/bench_vllm_turboquant_ab_sweep_kv_heavy.json`) still shows **FP16 ≈ TQ decompress ≈ TQ fused** on output tok/s. **Do not** extrapolate multiplicative end-to-end speedups from byte sums alone.
 
 #### Measured Attention-Kernel Scaling (no model weights — pure KV effect)
 
@@ -476,31 +642,26 @@ This means the tok/s ratio **improves from 0.43× to 0.57×** as batch goes from
 
 **Why the crossover is so high for the attention-only kernel:** TQ3 decode is compute-bound, not memory-bound. Even at batch=8 the TQ3 kernel is reading only ~40 GB/s effective — just 0.75% of MI300X's 5.3 TB/s peak. The kernel needs to close that gap (via AMD INT8 MFMA quantized matmul) to fully exploit the compression benefit at batch=1.
 
-**Full system crossover is lower:** When model weights (14 GB, fixed) are included, TQ3's advantage appears earlier. At batch=32 with seq=131K:
-- FP16 total bandwidth: 14 GB (weights) + 32 × 2.15 GB (KV) = 82.8 GB → KV is **83%** of total BW
-- TQ3 total bandwidth: 14 GB (weights) + 32 × 0.44 GB (KV) = 28.1 GB → TQ3 needs **66% less BW**
-- If bandwidth-limited throughout: TQ3 would be **2.9× faster** end-to-end at batch=32
+**Byte-budget illustration (not an end-to-end speedup claim):** At batch=32 with seq=131K, KV bytes can exceed half of *HBM traffic* in a toy sum of weights+KV — but **wall-clock tok/s** is still governed by **compute, kernels, scheduling, and non-attention layers**. Our **vLLM-style** measurements do **not** show a corresponding **~3×** (or even consistent) tok/s win for TQ vs FP16.
 
-#### The VRAM Capacity Story — TQ3's Most Durable Win
+#### The VRAM capacity story — TQ3's most durable win
 
-Even if TQ3 never crosses over in raw token throughput, it wins on **capacity**: it allows far larger batch sizes for the same VRAM.
+Even when raw **per-request** tok/s does not improve, TQ3 wins on **capacity**: smaller KV enables **larger batches or longer contexts in the same 192 GB** (scheduling / economics), not a guaranteed multiplier on **single-stream** decode.
 
-At seq=131K on a single MI300X (192 GB):
-| Format | KV per batch elem | VRAM after weights (177 GB) | Max batch | Max tok/s (extrapolated) |
-|--------|------------------|-----------------------------|-----------|--------------------------|
-| FP16 | 2.15 GB | 177 GB | **82** | ~4,900 tok/s |
-| TQ3-Nb (64B) | 0.57 GB | 177 GB | **310** | ~14,800 tok/s |
+At seq=131K on a single MI300X (192 GB), *order-of-magnitude* KV-only headroom after reserving ~15 GB weights (illustrative):
+| Format | KV per batch elem | VRAM after weights (177 GB) | Max batch (KV budget only) |
+|--------|------------------|-----------------------------|----------------------------|
+| FP16 | 2.15 GB | 177 GB | **~82** |
+| TQ3-Nb (64B) | 0.57 GB | 177 GB | **~310** |
 
-TQ3 allows **3.8× more concurrent batch elements**, which (at the sublinear compute scaling seen above) translates to roughly **3× more total throughput** on a single GPU at long context — not because the kernel is faster per token, but because the GPU can serve 3.8× more users simultaneously.
+**Aggregate serving throughput** may rise if the scheduler can fill those extra slots — that is a **systems** effect, **not** the same claim as “KV compression speeds up one Mistral decode stream.”
 
-**Summary of the batch=1 vs batch>1 picture:**
+**Summary (aligned with `report/paper.md` §5.9–§6.1):**
 
-| Metric | batch=1 | batch=8 | batch=32+ |
-|--------|---------|---------|-----------|
-| TQ3-Nb vs FP16 (seq=131K) | **0.43×** | **0.57×** | Closing → | 
-| Bottleneck | TQ3 compute-bound (dequant) | Mixed | KV bandwidth → TQ3 wins |
-| VRAM saving | **4.9×** always | **4.9×** | **4.9×** — enables 3.8× more batch |
-| Full-system impact | TQ3 slower (weights dominate) | ~0.6× attention, weights still large | **TQ3 faster** (KV BW dominates total) |
+| Lens | batch=1 HF decode | Attention-only tables below | vLLM Mistral A/B |
+|------|-------------------|----------------------------|------------------|
+| **Dominant story** | Weights + MLP cap **e2e tok/s** | TQ3-BP/NB still **slower** than FP16 SDPA in listed cells; ratios **move** with batch | **FP16 ≈ TQ** within noise |
+| **Where KV compression helps** | **Capacity**, not tok/s | Research / kernel path selection | **Capacity** + operator tuning; not measured tok/s win here |
 
 ---
 
@@ -563,7 +724,7 @@ Avoids the HIP ABI conflict by compiling JIT through Triton's ROCm backend (no `
 | `baselines/int4_baseline.py` | INT4 symmetric KV cache decode tok/s |
 | `benchmarks/bench_tq3_decode.py` | TQ3/TQ4 end-to-end decode vs FP16 |
 | `benchmarks/bench_quality.py` | Perplexity + KV cosine similarity |
-| `report/generate_figures.py` | Produces all 10 figures from JSON results |
+| `report/generate_figures.py` | Produces all 11 figures from JSON results |
 | `benchmarks/bench_triton_attention.py` | **Triton fused TQ3 vs FP16 and Python TQ3** |
 | `benchmarks/bench_batch_attention.py` | **Batch × seq scaling: kernel-only TQ3 vs FP16** |
 
@@ -587,7 +748,7 @@ Avoids the HIP ABI conflict by compiling JIT through Triton's ROCm backend (no `
 
 | Issue | Cause | Resolution |
 |-------|-------|-----------|
-| HIP fat-binary ABI mismatch (error 209) | ROCm 7.2 binary, ROCm 6.2 runtime | Use Triton / pure PyTorch |
+| HIP fat-binary ABI mismatch (error 209) | COV6 HSACO vs process HIP / COV5 expectations | Triton, PyTorch, or COV5 rebuild in-container |
 | `torch.utils.cpp_extension` fails | Same ABI mismatch with system `hipcc` | Triton JIT compiles for gfx942 |
 | System `libamdhip64.so` not loadable | Missing HSA symbol in VF environment | No fix; PyTorch runtime only |
 | HSACO COV6 vs COV5 | Default ROCm 7.2 outputs COV6, PyTorch needs COV5 | Recompile with `-mcode-object-version=5` |
@@ -670,14 +831,13 @@ The key finding: **TQ3-Nb has a lower crossover than TQ3-BP at every seq length*
 
 ---
 
-## 11. vLLM Integration: TurboQuantROCmAttentionBackend
+## 11. vLLM integration: TurboQuantROCm (`TURBOQUANT_ROCM`)
 
 ### 11.1 Overview
 
-`vllm/attention/backends/rocm_flash_attn.py` implements a drop-in vLLM attention
-backend that stores the paged KV cache in TQ3 format instead of FP16.  The backend
-plugs into vLLM's existing `CacheEngine` infrastructure with no changes to the model
-forward pass.
+**Source of truth (repo):** `tq_backends/attention/backends/rocm_flash_attn.py` — same logic as shipped into PyPI vLLM after **`scripts/install_turboquant_vllm_backend.sh`** (see `docs/vllm_turboquant_wiring.md`). The in-repo tree **must not** be named `vllm/`, or it will **shadow** the real package on `PYTHONPATH`.
+
+The backend stores the paged KV cache in **TQ3** layout and plugs into vLLM's `CacheEngine` without changing the model forward pass **outside** attention.
 
 **KV cache layout change:**
 
@@ -698,21 +858,23 @@ This is always correct and supports GQA.
 
 **Fused Triton path** (`VLLM_TQ_USE_FUSED_KERNEL=1`): `tq3_gather_for_triton`
 extracts bit-planes and norms into contiguous tensors, then calls
-`turboquant_attention_fwd` — the existing Triton kernel that reads 52 bytes/token
-vs 256 bytes and achieves 1.87–2.56× throughput vs the Python wrapper.  Currently
-decode-only and MHA-only (GQA fallback to decompress path).
+`turboquant_attention_fwd` (Split-K path on ROCm 7.2 / PyTorch 2.10 in Primus).
+**GQA (Mistral):** fused decode uses **`expand_tq_compressed_for_gqa`** so compressed KV heads align with query heads before the fused kernel; **native compressed-KV head indexing** (no materialized expand) remains future work.
 
-### 11.3 Integration Steps
+### 11.3 Integration steps
 
 ```bash
-# 1. Add kernels/ to PYTHONPATH
+# 0. Install ROCm-matched vLLM (see requirements-vllm-rocm.txt + docs)
+# 1. Repo root on PYTHONPATH for kernels only (not a stub vllm package)
 export PYTHONPATH=/path/to/amd-experiments/kernels:$PYTHONPATH
 
-# 2. Copy backend file into vLLM installation
-cp vllm/attention/backends/rocm_flash_attn.py \
-   $(python -c "import vllm; print(vllm.__path__[0])")/attention/backends/
+# 2. Copy backend into site-packages vllm tree (preferred)
+bash scripts/install_turboquant_vllm_backend.sh
 
-# 3. Launch vLLM with TQ3 backend
+# 3. Optional: prove dispatch path
+export VLLM_TQ_LOG_DISPATCH=1
+
+# 4. Launch vLLM with TQ3 backend
 VLLM_ATTENTION_BACKEND=TURBOQUANT_ROCM \
 VLLM_TQ_USE_FUSED_KERNEL=1 \
 python -m vllm.entrypoints.openai.api_server \
@@ -721,9 +883,16 @@ python -m vllm.entrypoints.openai.api_server \
     --max-model-len 131072
 ```
 
-### 11.4 MI300X KV Cache Capacity (vLLM)
+### 11.4 MI300X KV cache capacity (vLLM)
 
-Running `python vllm/attention/backends/rocm_flash_attn.py` prints the capacity table:
+From the repo (no `vllm/` stub on `PYTHONPATH`; only `kernels/` + repo root as needed):
+
+```bash
+cd /path/to/amd-experiments
+PYTHONPATH=./kernels:. python3 tq_backends/attention/backends/rocm_flash_attn.py
+```
+
+After `install_turboquant_vllm_backend.sh`, the same module under `site-packages/vllm/attention/backends/` prints the same capacity table when run as `__main__`.
 
 | Model | Weights | Max ctx FP16 | Max ctx TQ3 | Ratio |
 |-------|---------|-------------|-------------|-------|
@@ -795,9 +964,7 @@ In `bench_large_models.py`, the GQA ratio is inferred from the model config:
 gqa_ratio = cfg.num_attention_heads // cfg.num_key_value_heads   # = 8 for Llama-3-70B
 ```
 
-The `TurboQuantROCmAttentionImpl` uses `repeat_interleave(gqa_ratio, dim=-3)` to
-expand K/V to match Q head count before SDPA, matching the standard HuggingFace
-Llama-3 attention implementation.
+For **decompress+SDPA**, K/V are expanded to match query head count (HF-style GQA broadcast). For the **fused Triton decode** path, **`expand_tq_compressed_for_gqa`** prepares compressed KV for Mistral-style GQA (see `docs/vllm_turboquant_wiring.md`).
 
 ### 12.3 Benchmark Harness: `bench_large_models.py`
 
@@ -828,32 +995,32 @@ at each context length, saved to `results/bench_large_models_<model_slug>.json`.
 
 ---
 
-## 13. Batch Decode Benchmark: KV Bandwidth Bottleneck Regime
+## 13. Batch decode benchmark: illustrative KV / weight byte model
 
-### 13.1 Theoretical Model
+### 13.1 Theoretical model (bytes only — not end-to-end tok/s)
 
-For a decoder-only LLM at decode time, memory bandwidth has two components:
+For a decoder-only LLM at decode time, **HBM traffic** can be decomposed into:
 
 ```
 Weight BW  (W) = num_params × 2 bytes          [constant per step]
 KV cache BW (K) = 2 × L × Hkv × S × D × 2     [grows with context S]
 
 Crossover batch: batch* ≈ W / K_per_seq
-  → At batch > batch*, KV BW dominates and TQ3 shows speedup
-  → At batch < batch*, weight BW dominates and TQ3 is neutral
+  → Above batch*, KV **bytes** rival weight **bytes** in a toy streaming model
+  → Below batch*, weight **bytes** dominate that toy model
 ```
 
 **For Mistral-7B at seq_len = 8K:**
 ```
 W = 7B × 2 = 14 GB
 K = 2 × 32 × 8 × 8192 × 128 × 2 = 1.07 GB/seq
-batch* = 14 / 1.07 ≈ 13  →  meaningful TQ3 gain starts at batch ≥ 16
+batch* = 14 / 1.07 ≈ 13  →  KV bytes are ~half of weight+KV sum near batch ~13 (illustrative)
 ```
 
 **For Mistral-7B at seq_len = 32K:**
 ```
 K = 2 × 32 × 8 × 32768 × 128 × 2 = 4.29 GB/seq
-batch* = 14 / 4.29 ≈ 3.3  →  KV BW bottleneck starts at batch ≥ 4
+batch* = 14 / 4.29 ≈ 3.3  →  KV bytes catch up to weight bytes at smaller batch (illustrative)
 ```
 
 ### 13.2 Theoretical Speedup Profile
@@ -875,7 +1042,7 @@ where `W_fraction = 1/(1 + batch/batch*)` and `KV_fraction = 1 - W_fraction`.
 | 32 | ~2.09× | ~4.27× |
 | 64 | ~2.51× | ~4.58× |
 
-At batch=64, seq=32K: 4.58× theoretical speedup from TQ3's 4.92× KV compression.
+At batch=64, seq=32K: the script’s **4.58×** figure is **`theoretical_speedup`** from the **W/K byte fraction** model — it **does not** appear as **`speedup_vs_fp16`** in measured Mistral **vLLM** A/B (`results/bench_vllm_turboquant_ab_sweep_kv_heavy.json`: FP16 ≈ TQ decompress ≈ TQ fused). Treat §13.2 as a **pedagogical upper bound**, not a promise on wall-clock tok/s.
 
 ### 13.3 Benchmark Script: `bench_batch_decode.py`
 
@@ -900,16 +1067,60 @@ Per cell, the script reports:
 
 Results are saved to `results/bench_batch_decode_<model_slug>.json`.
 
-### 13.4 Why Batch Matters for Production Serving
+### 13.4 Why batch still matters (without overstating tok/s)
 
-vLLM and other serving systems use continuous batching where many requests share
-a single forward pass.  At batch ≥ 16 (typical production serving load):
+Continuous batching raises **aggregate** load and makes **KV footprint** and **scheduler headroom** decisive for **how many sequences fit** and how often the GPU is fed. **Smaller KV** (TQ3) increases **capacity** for those slots.
 
-- KV cache BW is the primary bottleneck
-- TQ3's 4.92× compression directly translates to ~4× more throughput
-- Peak MI300X bandwidth: 5.3 TB/s; TQ3 KV read ≈ 5.3/4.92 ≈ 1.08 TB/s effective
-  (much easier to saturate than the FP16 5.3 TB/s requirement)
-- Result: TQ3 allows ≈4.9× more concurrent users at the same latency SLA
+**Measured counterpoint:** in our **Mistral-7B vLLM-style** kv-heavy sweep, **FP16, TQ decompress, and TQ fused** land in the **same tok/s band** (`results/bench_vllm_turboquant_ab_sweep_kv_heavy.json`) — so **KV compression is not, by itself, unlocking per-GPU output tok/s** in that benchmark even under substantial concurrency. The §13.2 table remains useful as a **byte-budget thought experiment**, not as a substitute for **profiled** serving numbers on your exact build.
+
+---
+
+## 14. Two deployment stories, experiment figures, next steps, and resolved issues
+
+### 14.1 Story 1 — KV compression as a production **memory** feature (already strong)
+
+This story is **unconditional** for operators: 3-bit (and block-method) layouts **dramatically expand feasible context**, improve **`max_model_len` / HBM headroom**, and ease **scheduling and eviction** under load. That is a **real deployment win** even when **batch=1 decode tok/s** in FP16 is already flat (Table 1 / §6.1): you are buying **capacity and cost-of-ownership**, not necessarily single-stream speed.
+
+### 14.2 Story 2 — KV compression as a **speed** feature (now conditional)
+
+**Isolated** fused TQ3 attention (Split-K, ROCm 7.2 Primus) becomes compelling at **long context**: the FP16/fused latency ratio crosses **~1** near **≈16K** `seq_k` on the op benchmark (`results/bench_triton_attention.json`; see also `report/paper.md` §5.10). **End-to-end** decode on Mistral in our **vLLM-style** sweep still shows **FP16 ≈ TQ decompress ≈ TQ fused** aggregate output tok/s (`results/bench_vllm_turboquant_ab_sweep_kv_heavy.json`) — the **rest of the decode step** (weights, MLP, framework) remains heavy, so Story 2 does **not** automatically show up as tok/s separation at the full stack.
+
+**Why the two measurements look different (in words).** The vLLM chart is a **full stack** number: every decode step still pays for weights, MLP, norms, and framework work, so shrinking or accelerating **only** the attention/KV slice moves a **small fraction** of total time. That is why the three bars sit on top of each other even though the backends differ. The isolated chart throws away almost everything except **attention**: there, reading fewer compressed KV bytes eventually wins once `seq_k` is long enough. The charts below are **numbers only**; this paragraph is the interpretation.
+
+**Figure (PNG, two panels only):** run **`python3 report/generate_figures_v2.py`**. Optional hand-authored SVGs remain in `figures_v2/*.svg` where noted elsewhere.
+
+![Fig 29 — Full vLLM tok/s vs isolated attention ratio (charts only)](figures_v2/fig29_story_e2e_vs_isolated_attention_comparison.png)
+
+*Optional single-panel exports from the same script:* `fig27_story_e2e_vllm_flat_output_tok_s.png`, `fig28_story_isolated_attention_fp16_vs_fused_tq3.png`.
+
+### 14.3 Next step (for speed)
+
+Once KV/attention is wired and profiled, the marginal engineering question is **no longer** only “is KV smaller?” It is:
+
+> **Can I reduce the non-KV path enough that attention savings matter end-to-end?**
+
+Concrete levers: **quantized GEMM / FFN fusion**, less **Python** overhead on the hot path, **scheduler** and continuous-batching efficiency, **multi-GPU** sharding of weights, and **proof** via `VLLM_TQ_LOG_DISPATCH`, `torch.profiler`, and **rocprof** on the same build you ship.
+
+### 14.4 Issues we hit — and **fixed** (April 2026)
+
+| Issue | Resolution |
+|-------|------------|
+| In-repo `vllm/` **shadowing** PyPI vLLM | **`tq_backends/`** tree; only `kernels/` (+ repo root for benchmarks) on `PYTHONPATH` when importing backends |
+| HIP / code-object mismatch for custom kernels | **`docker_run_amd_mi300x.sh`** / **`rocm/primus:v26.2`** + **PyTorch 2.10**; COV5 or Triton paths |
+| **GQA** blocking fused decode | **`expand_tq_compressed_for_gqa`** + `results/bench_tq_gqa_decode_sweep.json` |
+| Fragile install / registry | **`scripts/install_turboquant_vllm_backend.sh`**, **`benchmarks/vllm_turboquant_registry.py`**, **`docs/vllm_turboquant_wiring.md`** |
+
+What remains is **product** work (e.g. **native compressed-KV head indexing** without materialized expand), not “unwired backend.”
+
+### 14.5 Repository closure — decode bottleneck (April 2026)
+
+We **completed** the **repository-side** engineering pass on **kv-heavy vLLM decode**: golden baselines, rocprof bucket truth, negative probes (FFN fusion, AWQ), **ROCm sliding-window eligibility patch** for custom paged attention (`scripts/patch_vllm_rocm_sliding_window_custom_paged.py`), **TurboQuant V1 bridge** host-sync reduction on uniform batches, stack fingerprint script, and the **canonical narrative** in [`docs/repo_decode_bottleneck_closure.md`](../docs/repo_decode_bottleneck_closure.md). **Fig 30** (where time goes) and **Fig 31** (repo vs deployment boundary) ship from `python3 report/generate_figures_v2.py`.
+
+![Fig 30 — Rocprof bucket shares (kv-heavy)](figures_v2/fig30_decode_whole_step_rocprof_buckets.png)
+
+![Fig 31 — Engineering closure vs deployment stack](figures_v2/fig31_repo_engineering_closure_vs_deployment.png)
+
+**Bottom line:** further **batch=1** tok/s is **hipBLASLt + vLLM graph/compile stability + ROCm cadence** on the **customer image**—not additional speculative code in this repo.
 
 ---
 
@@ -926,7 +1137,14 @@ a single forward pass.  At batch ≥ 16 (typical production serving load):
 | [Fig 7](figures/fig7_attention_speedup.png) | Attention speedup: FP16 vs TQ3 Python wrapper (8 KV heads) |
 | [Fig 8](figures/fig8_dashboard.png) | Summary dashboard (2×2 grid) |
 | [Fig 9](figures/fig9_max_context.png) | Maximum context length per scheme on 192 GB MI300X |
-|| [Fig 10](figures/fig10_triton_speedup.png) | **Triton fused TQ3: measured speedup vs FP16 and Python wrapper** |
+| [Fig 10](figures/fig10_triton_speedup.png) | Triton fused TQ3: measured speedup vs FP16 and Python wrapper |
+| [Fig 11](figures/fig11_headline_comparison.png) | Headline compression comparisons (decode, prefill, PPL, compression) |
+| [Fig 12](figures/fig12_fused_vs_fp16_normalized.png) | Normalized fused attention vs FP16 (Split-K update) |
+| [Fig 29](figures_v2/fig29_story_e2e_vs_isolated_attention_comparison.png) | E2E flat vs isolated attention, two charts only (§14; `generate_figures_v2.py`) |
+| [Fig 27](figures_v2/fig27_story_e2e_vllm_flat_output_tok_s.png) | vLLM Mistral kv-heavy tok/s (§14) |
+| [Fig 28](figures_v2/fig28_story_isolated_attention_fp16_vs_fused_tq3.png) | Isolated FP16/fused TQ3 ratio vs seq_k (§14) |
+| [Fig 30](figures_v2/fig30_decode_whole_step_rocprof_buckets.png) | Rocprof top-kernel bucket % — kv-heavy decode (§14.5) |
+| [Fig 31](figures_v2/fig31_repo_engineering_closure_vs_deployment.png) | Repo vs deployment engineering closure table (§14.5) |
 
 ## Appendix B: Raw Result Files
 
@@ -941,6 +1159,8 @@ a single forward pass.  At batch ≥ 16 (typical production serving load):
 | `results/bench_triton_attention.json` | Triton fused TQ3 attention, 6 context lengths, 32 heads |
 | `results/bench_kernels.json` | Kernel throughput: HIP binary + Python wrapper |
 | `results/bench_batch_decode_<model>.json` | Batch decode speedup, batch=1–64, seq=8K/32K (§13) |
+| `results/bench_vllm_turboquant_ab_sweep_kv_heavy.json` | vLLM Mistral-7B: FP16 vs TQ decompress vs TQ fused — **flat output tok/s** |
+| `results/bench_tq_gqa_decode_sweep.json` | GQA fused vs decompress+SDPA microbench (Primus) |
 | `results/bench_large_models_<model>.json` | Large model decode + capacity analysis (§12) |
 | `results/large_model_capacity_analysis.json` | Capacity table for all known models (analysis-only mode) |
 
@@ -948,4 +1168,8 @@ a single forward pass.  At batch ≥ 16 (typical production serving load):
 
 *Generated by AMD ROCm TurboQuant Benchmarking Study, April 2026*  
 *Hardware: AMD Instinct MI300X VF (gfx942:sramecc+:xnack-), 192 GB HBM3, 5.3 TB/s*  
-*All benchmarks validated on transformers 5.5.3, PyTorch 2.5.1+rocm6.2*
+*Primary MI300X work: ROCm 7.2 Primus (`docker_run_amd_mi300x.sh`), PyTorch 2.10, Transformers 5.5.3*
+
+### Theoretical cross-repo note (kept for context)
+
+External RotorQuant/llama.cpp reporting commonly cites ~10.3× for their symmetric 3-bit K+V format; this remains a format-specific reference point and is not directly comparable to this repo’s measured 52-byte TQ3 layout (4.923×).

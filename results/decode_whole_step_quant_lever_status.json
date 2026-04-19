@@ -1,0 +1,14 @@
+{
+  "decode_whole_step_phase": "lever_quant_weights",
+  "status": "ran_mi300x_frozen_venv",
+  "time_iso": "2026-04-19T07:21Z",
+  "artifact": "results/story2_quant_kv_heavy_ab.json",
+  "recipe": "Mistral-7B-v0.1 + TheBloke/Mistral-7B-v0.1-AWQ, input_len=1024, output_len=256, num_prompts=32, enforce_eager, gpu_memory_utilization=0.15 (VLLM_BENCH_GPU_MEM), max_model_len=8192 (dropped by vLLM on this build — engine used default max_seq_len)",
+  "summary": "FP16 vs TurboQuant paths stay within ~7% (~1760 vs ~1880 output tok/s). AWQ + FP16 KV and AWQ + TQ are ~35% slower (~1210–1244 tok/s): weight dequant dominates vs dense FP16 GEMMs at this shape.",
+  "script_notes": "scripts/run_story2_quant_kv_heavy.sh runs one Python process per backend so AWQ awq_dequantize is not broken by a prior FP16 engine in the same interpreter.",
+  "expected_commands": [
+    "export VLLM_ENABLE_V1_MULTIPROCESSING=0 VLLM_BENCH_GPU_MEM=0.15",
+    "bash scripts/run_story2_quant_kv_heavy.sh",
+    "python3 benchmarks/story2_kv_heavy_quant_compare.py"
+  ]
+}

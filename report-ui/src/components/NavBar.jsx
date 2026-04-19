@@ -22,6 +22,7 @@ export default function NavBar() {
         <a href="#math" className="nav-pill">Mathematics</a>
         <a href="#compression" className="nav-pill">Compression</a>
         <a href="#results" className="nav-pill">Results</a>
+        <a href="#stories" className="nav-pill">Stories</a>
         <a href="#reasoning" className="nav-pill">Reasoning</a>
         <a href="#conclusion" className="nav-pill">Conclusion</a>
         <a href="#figures" className="nav-pill">Figures</a>

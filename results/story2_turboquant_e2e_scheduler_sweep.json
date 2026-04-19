@@ -1,0 +1,373 @@
+{
+  "model": "mistralai/Mistral-7B-v0.1",
+  "quant_model": null,
+  "quantization": "awq",
+  "device": "AMD Instinct MI300X VF",
+  "rows": [
+    {
+      "backend": "fp16",
+      "elapsed_s": 0.646,
+      "throughput_output_tps": 99.1,
+      "vram_peak_gb": 19.07,
+      "engine_load_s": 8.47,
+      "enforce_eager": true,
+      "max_model_len": 8192,
+      "num_prompts": 1,
+      "use_turboquant": false,
+      "fused": false,
+      "weight_quantization": "",
+      "llm_kwargs_dropped": [
+        "max_model_len",
+        "max_num_batched_tokens"
+      ],
+      "max_num_batched_tokens": 8192,
+      "max_num_seqs": null,
+      "sweep_max_model_len": 8192,
+      "sweep_num_prompts": 1,
+      "sweep_input_len": 512,
+      "sweep_max_num_batched_tokens": 8192,
+      "sweep_max_num_seqs": null
+    },
+    {
+      "backend": "turboquant_decompress",
+      "elapsed_s": 0.598,
+      "throughput_output_tps": 107.1,
+      "vram_peak_gb": 38.06,
+      "engine_load_s": 4.17,
+      "enforce_eager": true,
+      "max_model_len": 8192,
+      "num_prompts": 1,
+      "use_turboquant": true,
+      "fused": false,
+      "weight_quantization": "",
+      "llm_kwargs_dropped": [
+        "kv_cache_dtype",
+        "max_model_len",
+        "max_num_batched_tokens"
+      ],
+      "max_num_batched_tokens": 8192,
+      "max_num_seqs": null,
+      "sweep_max_model_len": 8192,
+      "sweep_num_prompts": 1,
+      "sweep_input_len": 512,
+      "sweep_max_num_batched_tokens": 8192,
+      "sweep_max_num_seqs": null
+    },
+    {
+      "backend": "turboquant_fused",
+      "elapsed_s": 0.605,
+      "throughput_output_tps": 105.8,
+      "vram_peak_gb": 56.98,
+      "engine_load_s": 4.11,
+      "enforce_eager": true,
+      "max_model_len": 8192,
+      "num_prompts": 1,
+      "use_turboquant": true,
+      "fused": true,
+      "weight_quantization": "",
+      "llm_kwargs_dropped": [
+        "kv_cache_dtype",
+        "max_model_len",
+        "max_num_batched_tokens"
+      ],
+      "max_num_batched_tokens": 8192,
+      "max_num_seqs": null,
+      "sweep_max_model_len": 8192,
+      "sweep_num_prompts": 1,
+      "sweep_input_len": 512,
+      "sweep_max_num_batched_tokens": 8192,
+      "sweep_max_num_seqs": null
+    },
+    {
+      "backend": "fp16",
+      "elapsed_s": 0.945,
+      "throughput_output_tps": 541.9,
+      "vram_peak_gb": 75.9,
+      "engine_load_s": 4.07,
+      "enforce_eager": true,
+      "max_model_len": 8192,
+      "num_prompts": 8,
+      "use_turboquant": false,
+      "fused": false,
+      "weight_quantization": "",
+      "llm_kwargs_dropped": [
+        "max_model_len",
+        "max_num_batched_tokens"
+      ],
+      "max_num_batched_tokens": 8192,
+      "max_num_seqs": null,
+      "sweep_max_model_len": 8192,
+      "sweep_num_prompts": 8,
+      "sweep_input_len": 512,
+      "sweep_max_num_batched_tokens": 8192,
+      "sweep_max_num_seqs": null
+    },
+    {
+      "backend": "turboquant_decompress",
+      "elapsed_s": 0.874,
+      "throughput_output_tps": 586.1,
+      "vram_peak_gb": 94.82,
+      "engine_load_s": 4.03,
+      "enforce_eager": true,
+      "max_model_len": 8192,
+      "num_prompts": 8,
+      "use_turboquant": true,
+      "fused": false,
+      "weight_quantization": "",
+      "llm_kwargs_dropped": [
+        "kv_cache_dtype",
+        "max_model_len",
+        "max_num_batched_tokens"
+      ],
+      "max_num_batched_tokens": 8192,
+      "max_num_seqs": null,
+      "sweep_max_model_len": 8192,
+      "sweep_num_prompts": 8,
+      "sweep_input_len": 512,
+      "sweep_max_num_batched_tokens": 8192,
+      "sweep_max_num_seqs": null
+    },
+    {
+      "backend": "turboquant_fused",
+      "elapsed_s": 0.88,
+      "throughput_output_tps": 581.8,
+      "vram_peak_gb": 113.74,
+      "engine_load_s": 4.05,
+      "enforce_eager": true,
+      "max_model_len": 8192,
+      "num_prompts": 8,
+      "use_turboquant": true,
+      "fused": true,
+      "weight_quantization": "",
+      "llm_kwargs_dropped": [
+        "kv_cache_dtype",
+        "max_model_len",
+        "max_num_batched_tokens"
+      ],
+      "max_num_batched_tokens": 8192,
+      "max_num_seqs": null,
+      "sweep_max_model_len": 8192,
+      "sweep_num_prompts": 8,
+      "sweep_input_len": 512,
+      "sweep_max_num_batched_tokens": 8192,
+      "sweep_max_num_seqs": null
+    },
+    {
+      "backend": "fp16",
+      "elapsed_s": 1.087,
+      "throughput_output_tps": 941.7,
+      "vram_peak_gb": 133.01,
+      "engine_load_s": 4.21,
+      "enforce_eager": true,
+      "max_model_len": 8192,
+      "num_prompts": 16,
+      "use_turboquant": false,
+      "fused": false,
+      "weight_quantization": "",
+      "llm_kwargs_dropped": [
+        "max_model_len",
+        "max_num_batched_tokens"
+      ],
+      "max_num_batched_tokens": 8192,
+      "max_num_seqs": null,
+      "sweep_max_model_len": 8192,
+      "sweep_num_prompts": 16,
+      "sweep_input_len": 512,
+      "sweep_max_num_batched_tokens": 8192,
+      "sweep_max_num_seqs": null
+    },
+    {
+      "backend": "turboquant_decompress",
+      "elapsed_s": 1.024,
+      "throughput_output_tps": 999.5,
+      "vram_peak_gb": 151.93,
+      "engine_load_s": 4.22,
+      "enforce_eager": true,
+      "max_model_len": 8192,
+      "num_prompts": 16,
+      "use_turboquant": true,
+      "fused": false,
+      "weight_quantization": "",
+      "llm_kwargs_dropped": [
+        "kv_cache_dtype",
+        "max_model_len",
+        "max_num_batched_tokens"
+      ],
+      "max_num_batched_tokens": 8192,
+      "max_num_seqs": null,
+      "sweep_max_model_len": 8192,
+      "sweep_num_prompts": 16,
+      "sweep_input_len": 512,
+      "sweep_max_num_batched_tokens": 8192,
+      "sweep_max_num_seqs": null
+    },
+    {
+      "backend": "turboquant_fused",
+      "elapsed_s": 1.033,
+      "throughput_output_tps": 991.4,
+      "vram_peak_gb": 170.85,
+      "engine_load_s": 4.12,
+      "enforce_eager": true,
+      "max_model_len": 8192,
+      "num_prompts": 16,
+      "use_turboquant": true,
+      "fused": true,
+      "weight_quantization": "",
+      "llm_kwargs_dropped": [
+        "kv_cache_dtype",
+        "max_model_len",
+        "max_num_batched_tokens"
+      ],
+      "max_num_batched_tokens": 8192,
+      "max_num_seqs": null,
+      "sweep_max_model_len": 8192,
+      "sweep_num_prompts": 16,
+      "sweep_input_len": 512,
+      "sweep_max_num_batched_tokens": 8192,
+      "sweep_max_num_seqs": null
+    },
+    {
+      "backend": "fp16",
+      "elapsed_s": 0.663,
+      "throughput_output_tps": 96.6,
+      "vram_peak_gb": 189.43,
+      "engine_load_s": 4.11,
+      "enforce_eager": true,
+      "max_model_len": 8192,
+      "num_prompts": 1,
+      "use_turboquant": false,
+      "fused": false,
+      "weight_quantization": "",
+      "llm_kwargs_dropped": [
+        "max_model_len",
+        "max_num_batched_tokens"
+      ],
+      "max_num_batched_tokens": 8192,
+      "max_num_seqs": null,
+      "sweep_max_model_len": 8192,
+      "sweep_num_prompts": 1,
+      "sweep_input_len": 1024,
+      "sweep_max_num_batched_tokens": 8192,
+      "sweep_max_num_seqs": null
+    },
+    {
+      "backend": "turboquant_decompress",
+      "error": "Free memory on device cuda:0 (14.98/191.69 GiB) on startup is less than desired GPU memory utilization (0.1, 19.17 GiB). Decrease GPU memory utilization or reduce GPU memory used by other processes.",
+      "sweep_max_model_len": 8192,
+      "sweep_num_prompts": 1,
+      "sweep_input_len": 1024
+    },
+    {
+      "backend": "turboquant_fused",
+      "error": "Free memory on device cuda:0 (14.98/191.69 GiB) on startup is less than desired GPU memory utilization (0.1, 19.17 GiB). Decrease GPU memory utilization or reduce GPU memory used by other processes.",
+      "sweep_max_model_len": 8192,
+      "sweep_num_prompts": 1,
+      "sweep_input_len": 1024
+    },
+    {
+      "backend": "fp16",
+      "error": "Free memory on device cuda:0 (14.98/191.69 GiB) on startup is less than desired GPU memory utilization (0.1, 19.17 GiB). Decrease GPU memory utilization or reduce GPU memory used by other processes.",
+      "sweep_max_model_len": 8192,
+      "sweep_num_prompts": 8,
+      "sweep_input_len": 1024
+    },
+    {
+      "backend": "turboquant_decompress",
+      "error": "Free memory on device cuda:0 (14.98/191.69 GiB) on startup is less than desired GPU memory utilization (0.1, 19.17 GiB). Decrease GPU memory utilization or reduce GPU memory used by other processes.",
+      "sweep_max_model_len": 8192,
+      "sweep_num_prompts": 8,
+      "sweep_input_len": 1024
+    },
+    {
+      "backend": "turboquant_fused",
+      "error": "Free memory on device cuda:0 (14.98/191.69 GiB) on startup is less than desired GPU memory utilization (0.1, 19.17 GiB). Decrease GPU memory utilization or reduce GPU memory used by other processes.",
+      "sweep_max_model_len": 8192,
+      "sweep_num_prompts": 8,
+      "sweep_input_len": 1024
+    },
+    {
+      "backend": "fp16",
+      "error": "Free memory on device cuda:0 (14.98/191.69 GiB) on startup is less than desired GPU memory utilization (0.1, 19.17 GiB). Decrease GPU memory utilization or reduce GPU memory used by other processes.",
+      "sweep_max_model_len": 8192,
+      "sweep_num_prompts": 16,
+      "sweep_input_len": 1024
+    },
+    {
+      "backend": "turboquant_decompress",
+      "error": "Free memory on device cuda:0 (14.98/191.69 GiB) on startup is less than desired GPU memory utilization (0.1, 19.17 GiB). Decrease GPU memory utilization or reduce GPU memory used by other processes.",
+      "sweep_max_model_len": 8192,
+      "sweep_num_prompts": 16,
+      "sweep_input_len": 1024
+    },
+    {
+      "backend": "turboquant_fused",
+      "error": "Free memory on device cuda:0 (14.98/191.69 GiB) on startup is less than desired GPU memory utilization (0.1, 19.17 GiB). Decrease GPU memory utilization or reduce GPU memory used by other processes.",
+      "sweep_max_model_len": 8192,
+      "sweep_num_prompts": 16,
+      "sweep_input_len": 1024
+    },
+    {
+      "backend": "fp16",
+      "error": "Free memory on device cuda:0 (14.98/191.69 GiB) on startup is less than desired GPU memory utilization (0.1, 19.17 GiB). Decrease GPU memory utilization or reduce GPU memory used by other processes.",
+      "sweep_max_model_len": 8192,
+      "sweep_num_prompts": 1,
+      "sweep_input_len": 4096
+    },
+    {
+      "backend": "turboquant_decompress",
+      "error": "Free memory on device cuda:0 (14.98/191.69 GiB) on startup is less than desired GPU memory utilization (0.1, 19.17 GiB). Decrease GPU memory utilization or reduce GPU memory used by other processes.",
+      "sweep_max_model_len": 8192,
+      "sweep_num_prompts": 1,
+      "sweep_input_len": 4096
+    },
+    {
+      "backend": "turboquant_fused",
+      "error": "Free memory on device cuda:0 (14.98/191.69 GiB) on startup is less than desired GPU memory utilization (0.1, 19.17 GiB). Decrease GPU memory utilization or reduce GPU memory used by other processes.",
+      "sweep_max_model_len": 8192,
+      "sweep_num_prompts": 1,
+      "sweep_input_len": 4096
+    },
+    {
+      "backend": "fp16",
+      "error": "Free memory on device cuda:0 (14.98/191.69 GiB) on startup is less than desired GPU memory utilization (0.1, 19.17 GiB). Decrease GPU memory utilization or reduce GPU memory used by other processes.",
+      "sweep_max_model_len": 8192,
+      "sweep_num_prompts": 8,
+      "sweep_input_len": 4096
+    },
+    {
+      "backend": "turboquant_decompress",
+      "error": "Free memory on device cuda:0 (14.98/191.69 GiB) on startup is less than desired GPU memory utilization (0.1, 19.17 GiB). Decrease GPU memory utilization or reduce GPU memory used by other processes.",
+      "sweep_max_model_len": 8192,
+      "sweep_num_prompts": 8,
+      "sweep_input_len": 4096
+    },
+    {
+      "backend": "turboquant_fused",
+      "error": "Free memory on device cuda:0 (14.98/191.69 GiB) on startup is less than desired GPU memory utilization (0.1, 19.17 GiB). Decrease GPU memory utilization or reduce GPU memory used by other processes.",
+      "sweep_max_model_len": 8192,
+      "sweep_num_prompts": 8,
+      "sweep_input_len": 4096
+    },
+    {
+      "backend": "fp16",
+      "error": "Free memory on device cuda:0 (14.98/191.69 GiB) on startup is less than desired GPU memory utilization (0.1, 19.17 GiB). Decrease GPU memory utilization or reduce GPU memory used by other processes.",
+      "sweep_max_model_len": 8192,
+      "sweep_num_prompts": 16,
+      "sweep_input_len": 4096
+    },
+    {
+      "backend": "turboquant_decompress",
+      "error": "Free memory on device cuda:0 (14.98/191.69 GiB) on startup is less than desired GPU memory utilization (0.1, 19.17 GiB). Decrease GPU memory utilization or reduce GPU memory used by other processes.",
+      "sweep_max_model_len": 8192,
+      "sweep_num_prompts": 16,
+      "sweep_input_len": 4096
+    },
+    {
+      "backend": "turboquant_fused",
+      "error": "Free memory on device cuda:0 (14.98/191.69 GiB) on startup is less than desired GPU memory utilization (0.1, 19.17 GiB). Decrease GPU memory utilization or reduce GPU memory used by other processes.",
+      "sweep_max_model_len": 8192,
+      "sweep_num_prompts": 16,
+      "sweep_input_len": 4096
+    }
+  ]
+}

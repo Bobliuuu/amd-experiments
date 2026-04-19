@@ -4,6 +4,7 @@ This project has multiple long-form docs. Use this guide to quickly find the rig
 
 ## Documentation Map
 
+- **`benchmark_mi300_locked_env.md`**: canonical MI300X + vLLM benchmark Python path, exact lock steps, archive layout
 - `README.md`: top-level quick start, benchmark catalogue, and architecture notes
 - `summary.md`: compact table-oriented results across throughput, latency, quality
 - `current.md`: execution status, blockers, and recent implementation notes
@@ -43,6 +44,6 @@ The notebook wraps the same consolidation script and prints merged key sections.
 - **Fast status check (5-10 min):**
   - `summary.md` -> `current.md`
 - **Implementation/operator details (20-30 min):**
-  - `README.md` -> `kernels/hip/README.md` -> `research.md`
+  - `README.md` -> **`benchmark_mi300_locked_env.md`** -> `kernels/hip/README.md` -> `research.md`
 - **Report/slide preparation:**
   - `results/consolidated_benchmarks.md` -> `report/final_report_v2.md` -> `report-ui/README.md`

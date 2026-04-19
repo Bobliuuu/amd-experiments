@@ -1,0 +1,54 @@
+{
+  "device": "AMD Instinct MI300X VF",
+  "mi300x_peak_gbs": 5300.0,
+  "B": 1,
+  "H": 32,
+  "D": 128,
+  "S_q": 1,
+  "dispatch_check": {},
+  "sdpa_vs_bmm": [
+    {
+      "seq_len": 512,
+      "sdpa_ms": 0.0248,
+      "sdpa_gbs": 338.9,
+      "sdpa_pct_peak": 6.39,
+      "bmm_ms": 0.0567,
+      "bmm_gbs": 148.0,
+      "sdpa_speedup": 2.29
+    },
+    {
+      "seq_len": 1024,
+      "sdpa_ms": 0.0453,
+      "sdpa_gbs": 370.0,
+      "sdpa_pct_peak": 6.98,
+      "bmm_ms": 0.0559,
+      "bmm_gbs": 300.0,
+      "sdpa_speedup": 1.234
+    }
+  ],
+  "causal_vs_noncausal": [
+    {
+      "seq_len": 4096,
+      "causal_ms": 0.0204,
+      "noncausal_ms": 0.1839,
+      "ratio_c_over_nc": 0.1108,
+      "timing_differs": true
+    }
+  ],
+  "fp16_nonfused_fused_matrix": [
+    {
+      "seq_len": 1024,
+      "fp16_ms": 0.0455,
+      "nonfused_compressed_ms": 0.8526,
+      "fused_compressed_ms": 0.1637,
+      "fused_speedup_vs_nonfused": 5.207
+    },
+    {
+      "seq_len": 4096,
+      "fp16_ms": 0.1852,
+      "nonfused_compressed_ms": 2.2013,
+      "fused_compressed_ms": 0.4114,
+      "fused_speedup_vs_nonfused": 5.351
+    }
+  ]
+}

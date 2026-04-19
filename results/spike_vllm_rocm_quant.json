@@ -1,0 +1,108 @@
+{
+  "python_executable": "/root/workspace/amd-experiments/.benchmark_mi300_vllm_frozen/.venv/bin/python3",
+  "suggested_venv_python": null,
+  "inspect_only": false,
+  "fp16_model": "mistralai/Mistral-7B-v0.1",
+  "quant_model": "TheBloke/Mistral-7B-v0.1-AWQ",
+  "vllm_llm_init_params": [
+    "allowed_local_media_path",
+    "allowed_media_domains",
+    "attention_config",
+    "chat_template",
+    "compilation_config",
+    "convert",
+    "cpu_offload_gb",
+    "disable_custom_all_reduce",
+    "dtype",
+    "enable_return_routed_experts",
+    "enforce_eager",
+    "gpu_memory_utilization",
+    "hf_overrides",
+    "hf_token",
+    "kv_cache_memory_bytes",
+    "kwargs",
+    "logits_processors",
+    "mm_processor_kwargs",
+    "model",
+    "offload_group_size",
+    "offload_num_in_group",
+    "offload_params",
+    "offload_prefetch_step",
+    "pooler_config",
+    "profiler_config",
+    "quantization",
+    "quantization_config",
+    "revision",
+    "runner",
+    "seed",
+    "skip_tokenizer_init",
+    "structured_outputs_config",
+    "tensor_parallel_size",
+    "tokenizer",
+    "tokenizer_mode",
+    "tokenizer_revision",
+    "trust_remote_code"
+  ],
+  "torch_device": "AMD Instinct MI300X VF",
+  "trials": [
+    {
+      "trial": "fp16_baseline",
+      "load_ok": true,
+      "error": null,
+      "kwargs_sent": {
+        "model": "mistralai/Mistral-7B-v0.1",
+        "dtype": "float16",
+        "gpu_memory_utilization": 0.15,
+        "enforce_eager": true
+      },
+      "kwargs_dropped_unsupported": [
+        "max_model_len"
+      ]
+    },
+    {
+      "trial": "awq_weights",
+      "load_ok": false,
+      "error": "AttributeError(\"'_OpNamespace' '_C' object has no attribute 'awq_dequantize'\")",
+      "kwargs_sent": {
+        "model": "TheBloke/Mistral-7B-v0.1-AWQ",
+        "quantization": "awq",
+        "dtype": "float16",
+        "gpu_memory_utilization": 0.15,
+        "enforce_eager": true
+      },
+      "kwargs_dropped_unsupported": [
+        "max_model_len"
+      ]
+    },
+    {
+      "trial": "gptq_weights",
+      "load_ok": false,
+      "error": "1 validation error for ModelConfig\n  Value error, Quantization method specified in the model config (awq) does not match the quantization method specified in the `quantization` argument (gptq). [type=value_error, input_value=ArgsKwargs((), {'model': ...nderer_num_workers': 1}), input_type=ArgsKwargs]\n    For further information visit https://errors.pydantic.dev/2.13/v/value_error",
+      "kwargs_sent": {
+        "model": "TheBloke/Mistral-7B-v0.1-AWQ",
+        "quantization": "gptq",
+        "dtype": "float16",
+        "gpu_memory_utilization": 0.15,
+        "enforce_eager": true
+      },
+      "kwargs_dropped_unsupported": [
+        "max_model_len"
+      ]
+    },
+    {
+      "trial": "fp16_max_batched_tokens_4096",
+      "load_ok": true,
+      "error": null,
+      "kwargs_sent": {
+        "model": "mistralai/Mistral-7B-v0.1",
+        "dtype": "float16",
+        "gpu_memory_utilization": 0.15,
+        "enforce_eager": true
+      },
+      "kwargs_dropped_unsupported": [
+        "max_model_len",
+        "max_num_batched_tokens"
+      ]
+    }
+  ]
+}

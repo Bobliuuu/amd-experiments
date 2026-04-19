@@ -530,7 +530,7 @@ Quantified estimate for Mistral-7B at seq_len=32K:
 | turboquant-gpu (DevTechJr) | PolarQuant + QJL (cuTile) | 2–4 | NVIDIA CUDA | Public, v0.1.4 |
 | domvox/turboquant-hip | PolarQuant + QJL (HIP) | 3–4 | RDNA3 gfx1100 | Community, working |
 | animehacker/llama-turboquant | TQ3_0 (HIP) | 3 | gfx942, gfx1100, gfx1151 | Community, gfx942 listed |
-| vLLM FP8 KV (AMD MI300X) | FP8 quantization | 8 | gfx942 (MI300X) | Production, ROCm 6.2+ |
+| vLLM FP8 KV (AMD MI300X) | FP8 quantization | 8 | gfx942 (MI300X) | Production, ROCm 7.2+ |
 | FlashInfer on ROCm | Optimized attention | FP16/FP8 | gfx942 (CDNA3/4) | v0.5.3, production |
 | KIVI (baseline) | INT4 KV | 4 | CUDA | Published |
 | **This work** | TurboQuant HIP/Triton for CDNA3 | 2–4 | **gfx942 (MI300X)** | Planned |

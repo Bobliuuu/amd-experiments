@@ -1,0 +1,16 @@
+{
+  "hf_transformers_mistral_decode": {
+    "uses_turboquant_rocm_backend": false,
+    "attention": "PyTorch SDPA on FP16 DynamicCache (or BF16); no TQ3 fused kernel."
+  },
+  "vllm_import_probe": {
+    "kind": "import_failed",
+    "vllm_module_file": "ModuleNotFoundError(\"No module named 'vllm'\")",
+    "note": "Install vLLM per requirements-vllm-rocm.txt; run scripts/install_turboquant_vllm_backend.sh; register via benchmarks/vllm_turboquant_registry.py. Backend source: tq_backends/ (does not shadow PyPI vllm)."
+  },
+  "turboquant_fused_gqa_decode": {
+    "implementation": "tq_backends/attention/backends/rocm_flash_attn.py::_forward_decode_fused",
+    "standalone_validation": "benchmarks/validate_tq_gqa_fused_decode.py",
+    "dispatch_logging": "VLLM_TQ_LOG_DISPATCH=1"
+  }
+}

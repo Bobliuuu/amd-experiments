@@ -1,0 +1,40 @@
+{
+  "updated": "2026-04-15",
+  "device": "AMD Instinct MI300X VF",
+  "model": "mistralai/Mistral-7B-v0.1",
+  "sources": {
+    "tq3_decode": "results/bench_tq3_decode_mistralai_Mistral-7B-v0.1.json",
+    "runtime_ratio": "results/bench_runtime_ratio_all_methods.json",
+    "measured_cache": "results/bench_measured_cache_memory.json"
+  },
+  "turboquant_tq3_decode_seq8192": {
+    "seq_len": 8192,
+    "mode": "tq3",
+    "kv_bytes_fp16": 536739840,
+    "kv_bytes_compressed": 109025280,
+    "compression_ratio_reported": 4.923
+  },
+  "turboquant_tq3_decode_seq2048": {
+    "seq_len": 2048,
+    "mode": "tq3",
+    "kv_bytes_fp16": 268435456,
+    "kv_bytes_compressed": 54525952,
+    "compression_ratio_reported": 4.923
+  },
+  "runtime_materialized_bytes_seq2048": {
+    "seq_len": 2048,
+    "batch_size": 1,
+    "turbo_tq3": {
+      "kv_bytes_fp16": 268435456,
+      "kv_bytes_compressed_materialized": 54525952,
+      "ratio_observed_runtime": 4.923077,
+      "ratio_calculated_layout": 4.923077
+    },
+    "planar_tq3": {
+      "kv_bytes_fp16": 268435456,
+      "kv_bytes_compressed_materialized": 138412032,
+      "ratio_observed_runtime": 1.939394,
+      "ratio_calculated_layout": 4.923077
+    }
+  }
+}

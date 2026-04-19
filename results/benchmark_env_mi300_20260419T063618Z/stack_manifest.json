@@ -1,0 +1,55 @@
+{
+  "cuda_available": true,
+  "gpu_name": "AMD Instinct MI300X VF",
+  "hip": "7.2.53211",
+  "python": "3.12.3",
+  "python_executable": "/root/workspace/amd-experiments/.benchmark_mi300_vllm_frozen/.venv/bin/python",
+  "qualification_report_path": "/root/workspace/amd-experiments/.benchmark_mi300_vllm_frozen/qualification_report.json",
+  "qualification_summary": {
+    "benchmark_ready": true,
+    "checks_keys": [
+      "decode_smoke",
+      "has_rocprof",
+      "has_rocprofv2",
+      "torch_stack",
+      "uv_version",
+      "vllm_import",
+      "which_python"
+    ],
+    "has_rocprof": true,
+    "has_rocprofv2": true,
+    "torch_only_mode": false
+  },
+  "repo": "/root/workspace/amd-experiments",
+  "rocm_container_version": "7.2.0",
+  "rocminfo_gfx942_line": "rocminfo_absent",
+  "schema": "stack_manifest_v1",
+  "stability_tier": "nightly_wheel",
+  "stack_id": "vllm_pip_rocm721_owned_torch",
+  "toolchain_steps": [
+    {
+      "index_url": "https://download.pytorch.org/whl/nightly/rocm7.2",
+      "packages": [
+        "torch",
+        "torchvision",
+        "torchaudio"
+      ],
+      "step": "uv_pip_amd_nightly_torch_triple"
+    },
+    {
+      "extra_index_url": "https://wheels.vllm.ai/rocm/nightly/rocm721",
+      "step": "pip_install_vllm_rocm721"
+    }
+  ],
+  "torch": "2.10.0+git8514f05",
+  "torch_version_full": "2.10.0+git8514f05",
+  "torchaudio": "2.9.0+eaa9e4e",
+  "torchvision": "0.24.1+d801a34",
+  "uv_version": "uv 0.11.7 (x86_64-unknown-linux-gnu)",
+  "vllm": "0.19.2rc1.dev9+g4353c9cb4",
+  "vllm_install_method": "pip",
+  "vllm_wheel_variant": "rocm721",
+  "wheel_class": "vllm_nightly_rocm721_owned_torch",
+  "which_python_under_test": "/root/workspace/amd-experiments/.benchmark_mi300_vllm_frozen/.venv/bin/python",
+  "workdir": "/root/workspace/amd-experiments/.benchmark_mi300_vllm_frozen"
+}

@@ -1,0 +1,39 @@
+{
+  "benchmark_ready": true,
+  "checks": {
+    "decode_smoke": {
+      "detail": {
+        "ok": true,
+        "output_tokens": 4
+      },
+      "model": "facebook/opt-125m",
+      "ok": true,
+      "seconds": 44.242
+    },
+    "has_rocprof": true,
+    "has_rocprofv2": true,
+    "torch_stack": {
+      "cuda_available": true,
+      "gpu_name": "AMD Instinct MI300X VF",
+      "hip": "7.2.53211",
+      "rocm_torch_ok": true,
+      "torch": "2.10.0+git8514f05",
+      "torchaudio": "2.9.0+eaa9e4e",
+      "torchvision": "0.24.1+d801a34"
+    },
+    "uv_version": "uv 0.11.7 (x86_64-unknown-linux-gnu)",
+    "vllm_import": {
+      "ok": true,
+      "vllm_version": "0.19.2rc1.dev9+g4353c9cb4"
+    },
+    "which_python": "/root/workspace/amd-experiments/.benchmark_mi300_vllm_frozen/.venv/bin/python"
+  },
+  "notes": [
+    "decode_smoke passed"
+  ],
+  "python_executable": "/root/workspace/amd-experiments/.benchmark_mi300_vllm_frozen/.venv/bin/python",
+  "rocm_container_version": "7.2.0",
+  "schema": "rocm72_vllm_qualification_v1",
+  "time_utc": "2026-04-19T06:33:57.700324+00:00",
+  "torch_only_mode": false
+}

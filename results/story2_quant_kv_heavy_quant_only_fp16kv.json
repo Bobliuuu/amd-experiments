@@ -1,0 +1,33 @@
+{
+  "model": "mistralai/Mistral-7B-v0.1",
+  "quant_model": "TheBloke/Mistral-7B-v0.1-AWQ",
+  "quantization": "awq",
+  "input_len": 1024,
+  "output_len": 256,
+  "num_prompts": 32,
+  "max_model_len": 8192,
+  "max_num_batched_tokens": null,
+  "max_num_seqs": null,
+  "device": "AMD Instinct MI300X VF",
+  "enforce_eager": true,
+  "results": [
+    {
+      "backend": "quant_fp16_kv",
+      "elapsed_s": 6.762,
+      "throughput_output_tps": 1211.4,
+      "vram_peak_gb": 30.56,
+      "engine_load_s": 9.57,
+      "enforce_eager": true,
+      "max_model_len": 8192,
+      "num_prompts": 32,
+      "use_turboquant": false,
+      "fused": false,
+      "weight_quantization": "awq",
+      "llm_kwargs_dropped": [
+        "max_model_len"
+      ],
+      "max_num_batched_tokens": null,
+      "max_num_seqs": null
+    }
+  ]
+}

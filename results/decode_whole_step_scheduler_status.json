@@ -1,0 +1,27 @@
+{
+  "decode_whole_step_phase": "lever_graphs_scheduler",
+  "status": "partial_mi300x_frozen_venv_post_cleanup",
+  "time_iso": "2026-04-19T08:14Z",
+  "artifacts": {
+    "e2e_sweep": "results/story2_turboquant_e2e_scheduler_sweep.json",
+    "serving_path_ab": "results/story2_serving_path_ab_fp16.json"
+  },
+  "last_run": {
+    "cleanup": "scripts/gpu_torch_empty_cache.py before sweep",
+    "STORY2_SCHEDULER_GPU_MEM": "0.10 (final pass; 0.15 left marginal FAIL at util×total vs ~27.9 GiB free on some cells)",
+    "STORY2_SCHEDULER_MAX_LENS": "8192",
+    "e2e_rows": 27,
+    "e2e_rows_with_error": 17,
+    "cuda_graphs_default": null,
+    "cuda_graphs_error": "graphs subprocess exit=-6 (see story2_serving_path_ab_fp16.json); eager vs graphs tok/s gap not measured for graphs path"
+  },
+  "caveats": [
+    "vLLM startup requires free_memory >= gpu_memory_utilization * total_memory; long e2e_sweep.py reuses one process so reported free can sit ~28 GiB below torch-idle 191 GiB.",
+    "Narrow STORY2_SCHEDULER_NPROMPTS (e.g. 1,8) or lower STORY2_SCHEDULER_GPU_MEM further, or run each sweep cell in a fresh subprocess, to clear FAIL rows."
+  ],
+  "expected_commands": [
+    ".venv or frozen/bin/python3 scripts/gpu_torch_empty_cache.py",
+    "export VLLM_ENABLE_V1_MULTIPROCESSING=0 STORY2_SCHEDULER_GPU_MEM=0.15 STORY2_SCHEDULER_AUTO_GPU_MEM=0",
+    "bash scripts/run_story2_scheduler_sweep.sh"
+  ]
+}

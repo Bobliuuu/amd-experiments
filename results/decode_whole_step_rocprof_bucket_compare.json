@@ -1,0 +1,66 @@
+{
+  "story2_phase": "rocprof_bucket_compare",
+  "source_summary": "results/bench_vllm_rocprof_timeline_summary.json",
+  "meta": {
+    "rocprof_kernel_trace": true,
+    "rocprof_pmc": null,
+    "rocprof_hip_trace": false,
+    "enforce_eager": true,
+    "model": "mistralai/Mistral-7B-v0.1",
+    "quant_model": null,
+    "quantization": "awq",
+    "input_len": 1024,
+    "output_len": 256,
+    "num_prompts": 32,
+    "max_model_len": 8192,
+    "gpu_memory_utilization": 0.15,
+    "max_num_batched_tokens": null,
+    "max_num_seqs": null,
+    "kv_heavy_story2_reference": "results/bench_vllm_turboquant_ab_sweep_kv_heavy.json (input_len=1024, output_len=256, num_prompts=32)"
+  },
+  "interpretation": "When E2E tok/s is flat across TQ paths, gemm_hipblaslt+gemm_general often dominates top-kernel time; attention_named share rises with long KV / fused path only if attention is on the critical path.",
+  "modes": [
+    {
+      "mode": "fp16",
+      "bucket_share_pct_topk": {
+        "activation_elementwise": 2.15,
+        "attention_named": 29.58,
+        "gemm_hipblaslt": 43.1,
+        "other": 24.22
+      },
+      "top_kernel": "kernel_paged_attention_2d.kd"
+    },
+    {
+      "mode": "turboquant_decompress",
+      "bucket_share_pct_topk": {
+        "activation_elementwise": 2.17,
+        "attention_named": 30.21,
+        "gemm_hipblaslt": 43.74,
+        "other": 23.05
+      },
+      "top_kernel": "kernel_paged_attention_2d.kd"
+    },
+    {
+      "mode": "turboquant_fused",
+      "bucket_share_pct_topk": {
+        "activation_elementwise": 2.2,
+        "attention_named": 30.22,
+        "gemm_hipblaslt": 43.67,
+        "other": 23.07
+      },
+      "top_kernel": "kernel_paged_attention_2d.kd"
+    },
+    {
+      "mode": "quant_fp16_kv",
+      "error": "skipped: pass --quant-model for quant_* rocprof modes"
+    },
+    {
+      "mode": "quant_turboquant_decompress",
+      "error": "skipped: pass --quant-model for quant_* rocprof modes"
+    },
+    {
+      "mode": "quant_turboquant_fused",
+      "error": "skipped: pass --quant-model for quant_* rocprof modes"
+    }
+  ]
+}

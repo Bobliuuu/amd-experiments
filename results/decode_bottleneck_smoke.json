@@ -1,0 +1,50 @@
+{
+  "decode_bottleneck_smoke": true,
+  "picked_model": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+  "gpu_memory_utilization": 0.9185,
+  "input_len": 32,
+  "output_len": 16,
+  "num_prompts": 2,
+  "max_model_len": 2048,
+  "attempts": [
+    {
+      "model": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+      "exit_code": 0,
+      "stderr_tail": "Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.\n\nLoading safetensors checkpoint shards:   0% Completed | 0/1 [00:00<?, ?it/s]\n\nLoading safetensors checkpoint shards: 100% Completed | 1/1 [00:00<00:00,  5.46it/s]\n\nLoading safetensors checkpoint shards: 100% Completed | 1/1 [00:00<00:00,  5.46it/s]\n\n\nRendering prompts:   0%|          | 0/2 [00:00<?, ?it/s]\nRendering prompts: 100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 2/2 [00:00<00:00, 271.95it/s]\n\nProcessed prompts:   0%|          | 0/2 [00:00<?, ?it/s, est. speed input: 0.00 toks/s, output: 0.00 toks/s]\nProcessed prompts:  50%|\u2588\u2588\u2588\u2588\u2588     | 1/2 [00:01<00:01,  1.35s/it, est. speed input: 25.83 toks/s, output: 11.81 toks/s]\nProcessed prompts: 100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 2/2 [00:01<00:00,  1.35s/it, est. speed input: 50.19 toks/s, output: 23.62 toks/s]\nProcessed prompts: 100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 2/2 [00:01<00:00,  1.48it/s, est. speed input: 50.19 toks/s, output: 23.62 toks/s]\n\nRendering prompts:   0%|          | 0/2 [00:00<?, ?it/s]\nRendering prompts: 100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 2/2 [00:00<00:00, 3572.66it/s]\n\nProcessed prompts:   0%|          | 0/2 [00:00<?, ?it/s, est. speed input: 0.00 toks/s, output: 0.00 toks/s]\nProcessed prompts: 100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 2/2 [00:00<00:00, 20.03it/s, est. speed input: 681.08 toks/s, output: 320.49 toks/s]\nProcessed prompts: 100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 2/2 [00:00<00:00, 20.01it/s, est. speed input: 681.08 toks/s, output: 320.49 toks/s]\n[rank0]:[W419 07:46:57.065336257 ProcessGroupNCCL.cpp:1554] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())\n"
+    }
+  ],
+  "bench": {
+    "model": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+    "quant_model": null,
+    "quantization": "awq",
+    "input_len": 32,
+    "output_len": 16,
+    "num_prompts": 2,
+    "max_model_len": 2048,
+    "max_num_batched_tokens": null,
+    "max_num_seqs": null,
+    "device": "AMD Instinct MI300X VF",
+    "enforce_eager": true,
+    "results": [
+      {
+        "backend": "fp16",
+        "elapsed_s": 0.101,
+        "throughput_output_tps": 317.3,
+        "vram_peak_gb": 188.44,
+        "engine_load_s": 20.39,
+        "enforce_eager": true,
+        "max_model_len": 2048,
+        "num_prompts": 2,
+        "use_turboquant": false,
+        "fused": false,
+        "weight_quantization": "",
+        "llm_kwargs_dropped": [
+          "max_model_len"
+        ],
+        "max_num_batched_tokens": null,
+        "max_num_seqs": null
+      }
+    ]
+  },
+  "note": "FP16-only micro-decode for stack sanity. For MI300X Mistral kv-heavy GEMM vs attention split see results/decode_whole_step_rocprof_bucket_compare.json and docs/decode_whole_step_amdahl_outcome.md."
+}

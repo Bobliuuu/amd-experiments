@@ -28,7 +28,7 @@ const V2_FIGS = [
   ["fig12_decode_all_methods.png", "Batch Decode Throughput — All Methods",
    "Tokens/sec vs batch size for all four block methods at seq=4096 and seq=16384. All compressed methods plateau at constant throughput regardless of batch size — confirming they are compute-limited by the decompression kernel, not by KV memory bandwidth. FP16 scales with batch (more weight-cycling parallelism). At seq=16384, FP16 achieves 593 tok/s at batch=32 while PlanarQuant3 reaches only 116 tok/s."],
   ["fig13_batch_decode_crossover.png", "Batch Decode Crossover Analysis",
-   "Crossover point where KV bandwidth savings from compression begin to outweigh decompression overhead. At seq=4096, FP16 KV only wins at batch > 26. At seq=16384, crossover is at batch ≈ 6.5 — meaning at longer contexts, FP16 is preferable even at moderate batch sizes. Current results use PyTorch SDPA (not Flash Attention); with CK-based ROCm Flash Attention, the FP16 baseline would be 3–5× faster, shifting crossover higher."],
+   "Illustrative **byte-budget** crossover (KV vs weight traffic) from `report/paper.md` §5.9 — **not** a guarantee of higher end-to-end tok/s: measured synthetic decode still has compressed methods **decompress-limited** (plateau), and **vLLM** Mistral kv-heavy A/B shows **FP16 ≈ TQ** aggregate output tok/s. With CK Flash FP16, FP16 attention would be faster still, shifting any crossover **up**."],
   ["fig14_prefill_comparison.png", "Prefill KV Compression Speed",
    "Tokens/sec for compressing all KV vectors during a prefill pass (no model forward pass). At seq=32768: PlanarQuant achieves 1,126K tok/s (26.5× faster than TurboQuant), IsoQuant 891K tok/s (21.0×), RotorQuant 855K tok/s (20.1×), TurboQuant 42K tok/s (1× baseline). The 26.5× gap directly translates to Time-To-First-Token (TTFT) savings at long contexts. At seq=32768, TurboQuant adds 772ms of overhead vs PlanarQuant's 29ms."],
   ["fig15_compress_decompress_bw.png", "Compress / Decompress Kernel Bandwidth",
@@ -57,7 +57,7 @@ const V2_FIGS = [
 
 const V1_FIGS = [
   ["fig1_throughput_vs_context.png", "Decode Throughput vs Context Length",
-   "FP16 baseline achieves ~43–46 tok/s flat across all context lengths (512 to 131K) at batch=1 — confirming MI300X decode is compute-bound (model weight cycling), not KV-bandwidth-bound. TQ3 reaches 6.3 tok/s at 8K context, bottlenecked by Python-level compress/decompress overhead across 32 layers × 8 KV heads. FP8 matches FP16 closely (46.0 tok/s at 8K). INT4 drops to ~26 tok/s due to Python dequantization overhead."],
+   "FP16 baseline achieves ~43–46 tok/s flat across all context lengths (512 to 131K) at batch=1 — MI300X decode is **weight/step limited**, not KV-bandwidth-unlocked for tok/s. TQ3 HuggingFace path is much slower at batch=1 (Python decompress tax). **vLLM A/B** (`results/bench_vllm_turboquant_ab_sweep_kv_heavy.json`) likewise shows **FP16 ≈ TQ fused** aggregate output tok/s when the full stack runs — KV wins are **capacity / attention-op**, not automatic e2e speedups."],
   ["fig2_latency_vs_context.png", "Per-Token Latency vs Context Length",
    "Per-token decode latency (ms) vs context length. FP16 stable at ~21.5ms across all context lengths — confirming compute-bound behavior. TQ3 reaches ~160ms at 8K context (the compress/decompress loop adds ~138ms overhead per token across 32 layers). FP8 adds only ~0.3ms overhead at 8K. Context length has minimal effect on latency in the compute-bound regime."],
   ["fig3_memory_analysis.png", "VRAM Usage vs Context Length",
@@ -69,13 +69,23 @@ const V1_FIGS = [
   ["fig6_vram_vs_context.png", "VRAM vs Context — Compression Impact",
    "Steady-state VRAM for KV cache only (excluding model weights) vs context length. Linear growth in both cases: FP16 grows at 256 B/token·head, TQ3 at 52 B/token·head. At 65K context, FP16 KV cache uses ~24.7 GB total VRAM vs ~5 GB for TQ3 — a 4.92× difference that directly determines maximum context window size."],
   ["fig7_attention_speedup.png", "Attention Speedup — TQ3 Triton Kernel",
-   "Attention kernel speedup from TQ3 Triton fused dequant-attention vs PyTorch SDPA baseline across sequence lengths 512–131072. The fused kernel avoids materializing the full decompressed KV tensor, instead decompressing K/V blocks on-the-fly during the attention dot-product computation. Speedup grows with sequence length as the KV bandwidth savings compound."],
+   "Attention-focused speedup from TQ3 fused paths vs Python decompress baseline (historical figure pipeline). **Split-K / ROCm 7.2 Primus** reruns (`report/paper.md` §5.10, `results/bench_triton_attention.json`) show fused TQ3 **beats FP16 SDPA beyond ~16K** tokens **in isolation** — but **full-model / vLLM tok/s** can stay flat because **non-attention work** caps the step (`bench_vllm_turboquant_ab` JSON)."],
   ["fig8_dashboard.png", "Summary Dashboard — All Results",
    "Four-panel summary dashboard. Top-left: decode throughput (tok/s) vs context — FP16/FP8 flat at ~46, TQ3 at ~6. Top-right: VRAM vs context — TQ3 grows 4.92× slower. Bottom-left: KV cosine similarity across layers — TQ3 stable at 0.983. Bottom-right: compression ratio summary — TQ3 at 4.923×, TQ4 at 3.76×, FP8 at 2×, INT4 at 4×."],
   ["fig9_max_context.png", "Maximum Context Tokens on MI300X",
    "Maximum storable context tokens at each compression scheme. FP16: ~1.35M tokens in 192 GB. TQ3 (4.923×): ~6.66M tokens — 4.92× more context capacity. This projection assumes steady-state KV cache only (no activation buffers). The 6.9M token figure is the primary production argument for KV compression on MI300X, independent of decode throughput considerations."],
   ["fig10_triton_speedup.png", "Triton Kernel Development Speedup",
    "Speedup progression across Triton kernel versions for TurboQuant on MI300X. V1 (scalar Python): 1×. V2 bit-plane Triton: 1.87×. V2 nibble Triton: 2.56×. The Wave64 ballot() advantage on CDNA3 (64-bit mask vs CUDA's 32-bit) gives 2× better bitpacking efficiency per wavefront. Final kernel gap vs FP16 throughput: ~3× (bit-plane) / ~2.3× (nibble), down from ~6× in V1."],
+];
+
+/** Story composite: charts only — prose lives in the report UI / markdown. */
+const STORY_FIGS = [
+  ["fig29_story_e2e_vs_isolated_attention_comparison.png", "E2E vs isolated attention (two charts)",
+   "Left: full vLLM kv-heavy output tok/s (flat). Right: isolated attention FP16/fused TQ3 ratio vs seq_k. Generated by report/generate_figures_v2.py from bench_vllm_turboquant_ab_sweep_kv_heavy.json + bench_triton_attention.json."],
+  ["fig30_decode_whole_step_rocprof_buckets.png", "Kv-heavy decode — rocprof top-kernel buckets (%)",
+   "Stacked shares from results/decode_whole_step_rocprof_bucket_compare.json (~43% hipBLASLt GEMM, ~30% attention/paged). FP16 vs TurboQuant modes at the summarized shape — shows why E2E tok/s cannot move like a KV-only multiplier."],
+  ["fig31_repo_engineering_closure_vs_deployment.png", "Repository closure vs deployment stack",
+   "Table figure: in-repo mitigations (ROCm paged-attn eligibility patch, bridge sync reduction, evidence JSON) vs remainder (hipBLASLt, graphs/compile, ROCm cadence) validated on the shipped MI300X image."],
 ];
 
 export function getFigureUrlsAll() {
@@ -86,6 +96,7 @@ export function getFigureUrlsAll() {
     "fig25_mi300x_vs_author_claims.png",
   ]);
   return [
+    ...STORY_FIGS.map(([n, , d]) => makeFigure("figures_v2", n, d)),
     ...V2_FIGS.filter(([n]) => !hidden.has(n)).map(([n, , d]) => makeFigure("figures_v2", n, d)),
     ...V1_FIGS.map(([n, , d]) => makeFigure("figures", n, d)),
   ];

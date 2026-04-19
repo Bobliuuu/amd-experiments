@@ -1,0 +1,29 @@
+{
+  "model": "mistralai/Mistral-7B-v0.1",
+  "quant_model": null,
+  "quantization": "awq",
+  "device": "",
+  "rows": [
+    {
+      "backend": "fp16",
+      "error": "Engine core initialization failed. See root cause above. Failed core proc(s): {'EngineCore': 1}",
+      "sweep_max_model_len": 8192,
+      "sweep_num_prompts": 1,
+      "sweep_input_len": 512
+    },
+    {
+      "backend": "turboquant_decompress",
+      "error": "Engine core initialization failed. See root cause above. Failed core proc(s): {'EngineCore': 1}",
+      "sweep_max_model_len": 8192,
+      "sweep_num_prompts": 1,
+      "sweep_input_len": 512
+    },
+    {
+      "backend": "turboquant_fused",
+      "error": "Engine core initialization failed. See root cause above. Failed core proc(s): {'EngineCore': 1}",
+      "sweep_max_model_len": 8192,
+      "sweep_num_prompts": 1,
+      "sweep_input_len": 512
+    }
+  ]
+}

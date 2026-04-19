@@ -1,0 +1,29 @@
+{
+  "device": "AMD Instinct MI300X VF",
+  "rows": [
+    {
+      "seq_len": 1024,
+      "fused_ms": 5.6497,
+      "decompress_ms": 35.5411,
+      "speedup": 6.291
+    },
+    {
+      "seq_len": 4096,
+      "fused_ms": 19.1151,
+      "decompress_ms": 141.161,
+      "speedup": 7.385
+    },
+    {
+      "seq_len": 8192,
+      "fused_ms": 38.8237,
+      "decompress_ms": 286.9377,
+      "speedup": 7.391
+    },
+    {
+      "seq_len": 16384,
+      "fused_ms": 77.8447,
+      "decompress_ms": 582.563,
+      "speedup": 7.484
+    }
+  ]
+}

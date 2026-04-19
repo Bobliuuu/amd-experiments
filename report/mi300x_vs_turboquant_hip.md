@@ -94,14 +94,14 @@ Why this matters:
 
 ## 7) Runtime integration adaptation for this machine
 
-This repo explicitly handles ROCm ABI split in this environment:
+This repo handles **HIP / code-object** alignment explicitly:
 
-- System HIP toolchain: ROCm 7.2 (`hipcc`).
-- PyTorch runtime: ROCm 6.2 bundled.
+- **Canonical path:** build and run inside **ROCm 7.2 Primus** (`docker_run_amd_mi300x.sh` / `rocm/primus:v26.2`) so system `hipcc`, image PyTorch, and drivers agree.
+- **Python hot path:** `kernels/turboquant_mi300x.py` (pure PyTorch / rocBLAS / MFMA) avoids `ctypes`-loading a separately built `.so` into the PyTorch process when COV5/COV6 or runtime versions could disagree.
 
 Outcome:
-- Standalone HIP binaries (`tq_validate_mi300x`, `tq_bench_mi300x`) are used for native-kernel validation/perf.
-- Python path uses `kernels/turboquant_mi300x.py` (pure PyTorch/rocBLAS/MFMA) instead of `ctypes` loading the ROCm-7.2-built shared object into the ROCm-6.2 PyTorch process.
+- Standalone HIP binaries (`tq_validate_mi300x`, `tq_bench_mi300x`) validate native kernels in the container toolchain.
+- Python uses the PyTorch route above for stable end-to-end benchmarks.
 
 This is a practical MI300X deployment optimization (stability + reproducibility), not just a kernel micro-optimization.
 

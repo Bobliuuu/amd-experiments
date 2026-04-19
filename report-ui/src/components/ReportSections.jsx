@@ -1815,6 +1815,159 @@ export function ResultsSection() {
   );
 }
 
+/* ─── DEPLOYMENT STORIES & NEXT STEPS (memory vs speed) ───────────── */
+
+export function DeploymentStoriesSection() {
+  const ref = useRef(null);
+  const inView = useInView(ref, { once: true, margin: "-80px" });
+
+  return (
+    <section id="stories" className="report-section" ref={ref}>
+      <div className="section-divider" />
+      <motion.div
+        style={{ paddingTop: "5rem" }}
+        variants={fadeUp}
+        initial="hidden"
+        animate={inView ? "visible" : "hidden"}
+        custom={0}
+      >
+        <div className="section-label">
+          <span className="section-num">04b</span>
+          <span className="section-tag">EXPERIMENT RESULTS</span>
+        </div>
+        <h2 className="section-title">
+          Two deployment stories<br /><span className="dim">Memory vs speed</span>
+        </h2>
+        <p className="section-lead">
+          <strong>Story 1</strong> treats KV compression as a <em>production memory</em> feature: it expands feasible context,
+          improves <code>max_model_len</code> / HBM headroom, and helps scheduling even when batch=1 tok/s barely moves.
+          <strong> Story 2</strong> treats it as a <em>speed</em> feature only when the attention bubble is large enough and the non-KV path is lean enough for savings to surface end-to-end.
+        </p>
+      </motion.div>
+
+      <motion.div
+        className="glass"
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+          gap: "1.25rem",
+          padding: "1.5rem",
+          marginTop: "1.5rem",
+          maxWidth: 1280,
+          marginLeft: "auto",
+          marginRight: "auto",
+        }}
+        variants={fadeUp}
+        initial="hidden"
+        animate={inView ? "visible" : "hidden"}
+        custom={1}
+      >
+        <div>
+          <h3 style={{ fontSize: "1.05rem", color: "var(--iso-color)", marginBottom: "0.5rem" }}>Story 1 — Memory</h3>
+          <p style={{ fontSize: "0.86rem", color: "var(--text-sub)", lineHeight: 1.65 }}>
+            Same quality tier at 4.923× storage: more tokens in 192 GB, less eviction pressure, larger batches possible <em>given</em> VRAM.
+            This is a real deployment win independent of single-stream tok/s.
+          </p>
+        </div>
+        <div>
+          <h3 style={{ fontSize: "1.05rem", color: "var(--amd-red)", marginBottom: "0.5rem" }}>Story 2 — Speed (conditional)</h3>
+          <p style={{ fontSize: "0.86rem", color: "var(--text-sub)", lineHeight: 1.65 }}>
+            Isolated fused TQ3 attention becomes compelling around <strong>~16K</strong> sequence length (Split-K, Primus).
+            Full vLLM Mistral runs still show <strong>flat aggregate output tok/s</strong> across FP16 / TQ paths — the rest of the decode step stays heavy.
+          </p>
+        </div>
+      </motion.div>
+
+      <motion.div
+        style={{ maxWidth: 1100, margin: "2rem auto 0", padding: "0 1.5rem" }}
+        variants={fadeUp}
+        initial="hidden"
+        animate={inView ? "visible" : "hidden"}
+        custom={2}
+      >
+        <h3 style={{ fontSize: "1.15rem", color: "var(--text)", marginBottom: "1rem", textAlign: "center" }}>
+          Full stack vs attention-only
+        </h3>
+        <div
+          style={{
+            fontSize: "0.9rem",
+            color: "var(--text-sub)",
+            lineHeight: 1.8,
+            maxWidth: 920,
+            margin: "0 auto 1.25rem",
+            textAlign: "left",
+          }}
+        >
+          <p style={{ margin: "0 0 0.9rem" }}>
+            The left chart is a full vLLM run on Mistral-7B with a heavy KV setup. All three backends land on almost the same output tokens per second, because that number reflects the whole step: weight reads, MLP matmuls, norms, framework work, and attention together. Shrink the KV or speed up attention, and you still only touch part of the wall clock, so the total barely moves. That is the usual Amdahl story: a large fixed portion of the work is elsewhere.
+          </p>
+          <p style={{ margin: 0 }}>
+            The right chart is the same hardware, but the benchmark measures only the attention operator. There, fused TurboQuant reads fewer KV bytes and eventually beats FP16 SDPA once the sequence is long enough that the extra dequant work stops dominating. So the two panels are not in conflict: one is the full pipeline, the other is a single kernel path. Smaller KV is still a strong memory win; turning it into a clear end-to-end speed win means making the non-attention slice smaller or cheaper as well.
+          </p>
+        </div>
+        <figure className="glass" style={{ margin: 0, padding: "1rem 1.25rem", borderRadius: "var(--radius-md)" }}>
+          <img
+            src="/content/figures_v2/fig29_story_e2e_vs_isolated_attention_comparison.png"
+            alt="Two charts: full vLLM output tok/s flat across backends, and isolated attention FP16 over fused TQ3 ratio versus sequence length"
+            style={{ width: "100%", height: "auto", borderRadius: 8 }}
+            loading="lazy"
+          />
+          <figcaption style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.65rem", lineHeight: 1.55 }}>
+            Data: <code>results/bench_vllm_turboquant_ab_sweep_kv_heavy.json</code> and <code>results/bench_triton_attention.json</code>. Figure from <code>report/generate_figures_v2.py</code>.
+          </figcaption>
+        </figure>
+      </motion.div>
+
+      <motion.div
+        className="glass"
+        style={{
+          marginTop: "2rem",
+          maxWidth: 900,
+          marginLeft: "auto",
+          marginRight: "auto",
+          padding: "1.5rem 1.75rem",
+          borderLeft: "4px solid var(--amd-orange)",
+        }}
+        variants={fadeUp}
+        initial="hidden"
+        animate={inView ? "visible" : "hidden"}
+        custom={3}
+      >
+        <h3 style={{ fontSize: "1.05rem", marginBottom: "0.6rem", color: "var(--text)" }}>Next step (for speed)</h3>
+        <p style={{ fontSize: "0.9rem", color: "var(--text-sub)", lineHeight: 1.75, margin: 0 }}>
+          The question is no longer only &quot;is KV smaller?&quot; It is:{" "}
+          <strong>Can I reduce the non-KV path enough that attention savings matter end-to-end?</strong>
+          {" "}Quantized GEMM / FFN fusion, less Python overhead, better scheduling, and profiling the full step
+          (<code>VLLM_TQ_LOG_DISPATCH</code>, rocprof) turn Story 2 from an operator win into a serving win.
+        </p>
+      </motion.div>
+
+      <motion.div
+        className="glass"
+        style={{
+          marginTop: "1.25rem",
+          maxWidth: 900,
+          marginLeft: "auto",
+          marginRight: "auto",
+          padding: "1.5rem 1.75rem",
+        }}
+        variants={fadeUp}
+        initial="hidden"
+        animate={inView ? "visible" : "hidden"}
+        custom={4}
+      >
+        <h3 style={{ fontSize: "1.05rem", marginBottom: "0.6rem", color: "var(--planar-color)" }}>Issues encountered — now fixed</h3>
+        <ul style={{ margin: 0, paddingLeft: "1.1rem", color: "var(--text-sub)", fontSize: "0.86rem", lineHeight: 1.75 }}>
+          <li>In-repo <code>vllm/</code> shadowing PyPI vLLM → <code>tq_backends/</code> + <code>PYTHONPATH</code> discipline.</li>
+          <li>HIP / PyTorch alignment for reproducible numbers → <strong>Primus</strong> <code>rocm/primus:v26.2</code> + PyTorch 2.10.</li>
+          <li>GQA blocking fused decode → <code>expand_tq_compressed_for_gqa</code> + <code>bench_tq_gqa_decode_sweep.json</code>.</li>
+          <li>Install / registry fragility → <code>scripts/install_turboquant_vllm_backend.sh</code>, <code>vllm_turboquant_registry.py</code>, <code>docs/vllm_turboquant_wiring.md</code>.</li>
+        </ul>
+      </motion.div>
+    </section>
+  );
+}
+
 /* ─── REASONING SECTION ──────────────────────────────────────────── */
 
 export function ReasoningSection() {

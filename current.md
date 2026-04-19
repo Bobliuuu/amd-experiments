@@ -4,7 +4,7 @@
 
 ### Phase 0: Environment Setup ✓
 - PyTorch ROCm installed and verified on AMD Instinct MI300X VF (gfx942:sramecc+:xnack-)
-  - PyTorch HIP version: 6.2.41133 (bundled), system ROCm: 7.2
+  - **Canonical today:** ROCm **7.2** Primus + PyTorch **2.10** (`docker_run_amd_mi300x.sh`)
   - GPU: 192 GB HBM3, ~205 GB free VRAM, Wave64 (wavefront=64)
 - Mistral-7B-v0.1 downloaded: 14 GB, `~/.cache/huggingface/hub/`
 - All Python deps installed: numpy, scipy, transformers 5.5.3, triton 3.1.0, matplotlib, pandas
@@ -48,7 +48,7 @@ Results in: `results/fp16_baseline_mistralai_Mistral-7B-v0.1.json`
 - `kernels/turboquant_mi300x.py` — pure-PyTorch implementation
   - Rotation via `torch.matmul` → rocBLAS → MFMA
   - TQ3 cosine sim avg 0.983, MSE 0.000266, fused dot error 0.003%
-- Root cause: ROCm 7.2 (system) vs ROCm 6.2 (PyTorch bundle) ABI incompatibility
+- Root cause: HIP **code-object / runtime** mismatch when mixing standalone ``hipcc`` builds with the PyTorch process (use Primus + pure PyTorch path)
 
 ### Phase 3: Triton Fused Attention ✓ (written, not end-to-end tested)
 - `kernels/tq_triton.py` — Flash Attention 2-style fused dequant-attention kernel
@@ -92,7 +92,7 @@ This will run FP8, INT4, quality benchmarks, and regenerate all plots with real 
 
 ### Architecture
 - Device: AMD Instinct MI300X VF — gfx942:sramecc+:xnack-
-- PyTorch: ROCm 6.2 (bundled), System: ROCm 7.2
+- PyTorch: ROCm **7.2–aligned** build in Primus; system drivers **ROCm 7.2**
 - HF Transformers: 5.5.3 (uses DynamicCache for past_key_values)
 - Triton: 3.1.0, Ninja: installed
 

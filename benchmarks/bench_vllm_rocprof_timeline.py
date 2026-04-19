@@ -3,6 +3,12 @@ Collect per-mode ROCm kernel timeline summaries for vLLM serving.
 
 Runs `bench_vllm_turboquant_ab.py --only-backend <mode>` under rocprofv2
 and writes a compact JSON summary of top kernels by cumulative duration.
+
+Optional hardware counters (MI300X / gfx942): pass ``--pmc FETCH_SIZE,...`` to
+append ``rocprofv2 --pmc ...`` alongside ``--kernel-trace``. On many VF
+(virtual function) partitions SQ counter sets exceed the hardware limit and
+rocprof fails with ``ROCPROFILER_STATUS_ERROR_PROFILE_EXCEEDS_HW_LIMIT`` — use
+timeline-only (default) or a smaller counter set; see ``benchmarks/profile_rocprof.py``.
 """
 
 from __future__ import annotations
@@ -12,10 +18,25 @@ import csv
 import json
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+_DEFAULT_VLLM_PYTHON = _REPO_ROOT / ".benchmark_mi300_vllm_frozen" / ".venv" / "bin" / "python"
+if not _DEFAULT_VLLM_PYTHON.is_file():
+    _DEFAULT_VLLM_PYTHON = _REPO_ROOT / ".venv" / "bin" / "python"
+if not _DEFAULT_VLLM_PYTHON.is_file():
+    _DEFAULT_VLLM_PYTHON = Path(sys.executable)
 
-MODES = ("fp16", "turboquant_decompress", "turboquant_fused")
+
+MODES = (
+    "fp16",
+    "turboquant_decompress",
+    "turboquant_fused",
+    "quant_fp16_kv",
+    "quant_turboquant_decompress",
+    "quant_turboquant_fused",
+)
 
 
 def _parse_kernel_durations(trace_file: Path, top_k: int | None) -> dict:
@@ -115,6 +136,8 @@ def _run_mode(args, mode: str) -> dict:
     if args.with_hip_trace:
         cmd.append("--hip-trace")
     cmd.append("--kernel-trace")
+    if args.pmc.strip():
+        cmd.extend(["--pmc", args.pmc.strip()])
     cmd += [
         str(args.python),
         str(args.ab_script),
@@ -131,11 +154,28 @@ def _run_mode(args, mode: str) -> dict:
         "--output",
         str(out_json),
     ]
+    if mode.startswith("quant_"):
+        if not args.quant_model:
+            raise ValueError(f"Mode {mode} requires --quant-model (HF AWQ/GPTQ id)")
+        cmd += [
+            "--quant-model",
+            args.quant_model,
+            "--quantization",
+            args.quantization,
+        ]
     if args.enforce_eager:
         cmd.append("--enforce-eager")
-    # Run from workspace root so `amd-experiments/vllm/` is not on sys.path (shadows installed vLLM).
-    workspace_root = Path(__file__).resolve().parents[2]
-    subprocess.run(cmd, check=True, cwd=str(workspace_root))
+    if args.max_model_len > 0:
+        cmd += ["--max-model-len", str(args.max_model_len)]
+    if args.gpu_memory_utilization > 0:
+        cmd += ["--gpu-memory-utilization", str(args.gpu_memory_utilization)]
+    if args.max_num_batched_tokens > 0:
+        cmd += ["--max-num-batched-tokens", str(args.max_num_batched_tokens)]
+    if args.max_num_seqs > 0:
+        cmd += ["--max-num-seqs", str(args.max_num_seqs)]
+    # Run from amd-experiments root; do not cwd to a path that puts a `vllm/` stub before site-packages.
+    repo_root = Path(__file__).resolve().parents[1]
+    subprocess.run(cmd, check=True, cwd=str(repo_root))
     parsed = _aggregate_results_csv(out_dir, top_k=args.top_k)
     if not parsed.get("trace_files"):
         return {"mode": mode, "error": "No rocprof results_*.csv found", "out_dir": str(out_dir)}
@@ -146,13 +186,62 @@ def _run_mode(args, mode: str) -> dict:
 
 def main():
     p = argparse.ArgumentParser(description="Collect rocprof timeline per backend mode.")
-    p.add_argument("--python", type=Path, default=Path("/root/workspace/amd-experiments/.venv-vllm-rocm/bin/python"))
-    p.add_argument("--ab-script", type=Path, default=Path("/root/workspace/amd-experiments/benchmarks/bench_vllm_turboquant_ab.py"))
-    p.add_argument("--out-dir", type=Path, default=Path("/root/workspace/amd-experiments/results"))
+    p.add_argument(
+        "--python",
+        type=Path,
+        default=_DEFAULT_VLLM_PYTHON,
+        help="Python with torch+vLLM (default: amd-experiments/.venv/bin/python if present).",
+    )
+    p.add_argument(
+        "--ab-script",
+        type=Path,
+        default=_REPO_ROOT / "benchmarks" / "bench_vllm_turboquant_ab.py",
+    )
+    p.add_argument(
+        "--out-dir",
+        type=Path,
+        default=_REPO_ROOT / "results",
+        help="Directory for per-mode rocprof dirs and bench_vllm_rocprof_timeline_summary.json",
+    )
     p.add_argument("--model", default="mistralai/Mistral-7B-v0.1")
+    p.add_argument(
+        "--quant-model",
+        default="",
+        help="HF id for AWQ/GPTQ weights; required for quant_* modes.",
+    )
+    p.add_argument("--quantization", default="awq")
     p.add_argument("--input-len", type=int, default=256)
     p.add_argument("--output-len", type=int, default=64)
     p.add_argument("--num-prompts", type=int, default=8)
+    p.add_argument(
+        "--gpu-memory-utilization",
+        type=float,
+        default=-1.0,
+        help="If >0, pass --gpu-memory-utilization to bench_vllm_turboquant_ab.py (needed on VF / shared VRAM).",
+    )
+    p.add_argument(
+        "--max-model-len",
+        type=int,
+        default=0,
+        help="If >0, pass --max-model-len to bench_vllm_turboquant_ab.py.",
+    )
+    p.add_argument(
+        "--max-num-batched-tokens",
+        type=int,
+        default=0,
+        help="If >0, forwarded to A/B bench when supported.",
+    )
+    p.add_argument(
+        "--max-num-seqs",
+        type=int,
+        default=0,
+        help="If >0, forwarded to A/B bench when supported.",
+    )
+    p.add_argument(
+        "--kv-heavy-story2",
+        action="store_true",
+        help="Set input_len=1024, output_len=256, num_prompts=32 to match bench_vllm_turboquant_ab_sweep_kv_heavy.json.",
+    )
     p.add_argument("--top-k", type=int, default=20)
     p.add_argument("--mode", choices=MODES, default="", help="Run one mode only")
     p.add_argument(
@@ -167,19 +256,56 @@ def main():
         help="Allow CUDA graphs while profiling (may fail or produce huge traces under rocprof).",
     )
     p.set_defaults(enforce_eager=True)
+    p.add_argument(
+        "--pmc",
+        default="",
+        metavar="COUNTERS",
+        help=(
+            "Optional rocprofv2 hardware counters (comma-separated), e.g. "
+            "FETCH_SIZE,WRITE_SIZE,SQ_INSTS_VALU. Appended after --kernel-trace. "
+            "Often unavailable or limited on VF; see profile_rocprof.py / report/paper.md."
+        ),
+    )
     args = p.parse_args()
+    if args.kv_heavy_story2:
+        args.input_len = 1024
+        args.output_len = 256
+        args.num_prompts = 32
+    if args.max_model_len <= 0 and args.kv_heavy_story2:
+        args.max_model_len = 8192
 
     modes = [args.mode] if args.mode else list(MODES)
-    all_results = [_run_mode(args, m) for m in modes]
+    all_results = []
+    for m in modes:
+        if m.startswith("quant_") and not args.quant_model:
+            all_results.append(
+                {
+                    "mode": m,
+                    "error": "skipped: pass --quant-model for quant_* rocprof modes",
+                }
+            )
+            continue
+        all_results.append(_run_mode(args, m))
     summary_path = args.out_dir / "bench_vllm_rocprof_timeline_summary.json"
     meta = {
         "rocprof_kernel_trace": True,
+        "rocprof_pmc": args.pmc.strip() or None,
         "rocprof_hip_trace": bool(args.with_hip_trace),
         "enforce_eager": bool(args.enforce_eager),
         "model": args.model,
+        "quant_model": args.quant_model or None,
+        "quantization": args.quantization,
         "input_len": args.input_len,
         "output_len": args.output_len,
         "num_prompts": args.num_prompts,
+        "max_model_len": args.max_model_len if args.max_model_len > 0 else None,
+        "gpu_memory_utilization": args.gpu_memory_utilization
+        if args.gpu_memory_utilization > 0
+        else None,
+        "max_num_batched_tokens": args.max_num_batched_tokens or None,
+        "max_num_seqs": args.max_num_seqs or None,
+        "kv_heavy_story2_reference": "results/bench_vllm_turboquant_ab_sweep_kv_heavy.json "
+        "(input_len=1024, output_len=256, num_prompts=32)",
     }
     summary_path.write_text(
         json.dumps({"meta": meta, "results": all_results}, indent=2),

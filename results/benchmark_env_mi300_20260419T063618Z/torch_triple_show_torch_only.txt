@@ -1,0 +1,6 @@
+Name: torch
+Version: 2.13.0.dev20260417+rocm7.2
+Name: torchaudio
+Version: 2.11.0.dev20260418+rocm7.2
+Name: torchvision
+Version: 0.27.0.dev20260418+rocm7.2

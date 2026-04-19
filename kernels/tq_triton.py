@@ -55,10 +55,12 @@ from typing import Optional
 #   index 0-3 → negative; index 4-7 → positive (symmetric)
 # Magnitudes for each (b1, b0) pair — same for positive and negative side,
 # just mirrored: for negative, bit pattern *inverts* before the mag lookup.
-_C00: tl.constexpr = 0.02174971334976657   # |idx|=0 in {4,3} → smallest
-_C01: tl.constexpr = 0.06702922184405663   # |idx|=1 in {5,2}
-_C10: tl.constexpr = 0.11879501670185091   # |idx|=2 in {6,1}
-_C11: tl.constexpr = 0.18904037194348838   # |idx|=3 in {7,0} → largest
+# Triton 3.6+ (ROCm 7.2 containers): use tl.constexpr(...) — annotated globals
+# are not always treated as kernel-visible constexprs.
+_C00 = tl.constexpr(0.02174971334976657)   # |idx|=0 in {4,3} → smallest
+_C01 = tl.constexpr(0.06702922184405663)   # |idx|=1 in {5,2}
+_C10 = tl.constexpr(0.11879501670185091)   # |idx|=2 in {6,1}
+_C11 = tl.constexpr(0.18904037194348838)   # |idx|=3 in {7,0} → largest
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -636,6 +638,7 @@ def _tq3_splitk_partial_kernel(
     head_dim: tl.constexpr,
     BLOCK_M: tl.constexpr,
     BLOCK_N: tl.constexpr,
+    BLOCK_KV: tl.constexpr,
     sm_scale: float,
 ):
     """
@@ -673,65 +676,68 @@ def _tq3_splitk_partial_kernel(
     byte_in_plane = d_range // 8
     bit_in_byte = d_range % 8
 
-    block_n_start = pid_split * BLOCK_N
-    n_mask = (block_n_start + n_range) < seq_k
-    n_mask_2d = n_mask[:, None]
-
-    k_block_base = K_planes_ptr + k_base + block_n_start * stride_kn
-    k_byte_ptrs = (
-        k_block_base
-        + n_range[:, None] * stride_kn
-        + byte_in_plane[None, :]
-    )
-    b0k_raw = tl.load(k_byte_ptrs, mask=n_mask_2d, other=0).to(tl.int32)
-    b1k_raw = tl.load(k_byte_ptrs + 16, mask=n_mask_2d, other=0).to(tl.int32)
-    b2k_raw = tl.load(k_byte_ptrs + 32, mask=n_mask_2d, other=0).to(tl.int32)
-
     bit_shift = bit_in_byte[None, :]
-    b0k = (b0k_raw >> bit_shift) & 1
-    b1k = (b1k_raw >> bit_shift) & 1
-    b2k = (b2k_raw >> bit_shift) & 1
-    k_centroids = _bits_to_centroid(b0k, b1k, b2k)
+    split_start = pid_split * BLOCK_KV
+    split_end = tl.minimum(split_start + BLOCK_KV, seq_k)
+    for rel_n in range(0, BLOCK_KV, BLOCK_N):
+        block_n_start = split_start + rel_n
+        n_mask = (block_n_start + n_range) < split_end
+        n_mask_2d = n_mask[:, None]
 
-    raw_scores = tl.dot(q, k_centroids.to(tl.float16).T, out_dtype=tl.float32)
-    k_norms_block = tl.load(
-        K_norms_ptr + kn_base + (block_n_start + n_range) * stride_knn,
-        mask=n_mask,
-        other=0.0,
-    )
-    scores = raw_scores * (k_norms_block * sm_scale)[None, :]
-    scores = tl.where(n_mask[None, :], scores, -1e9)
+        k_block_base = K_planes_ptr + k_base + block_n_start * stride_kn
+        k_byte_ptrs = (
+            k_block_base
+            + n_range[:, None] * stride_kn
+            + byte_in_plane[None, :]
+        )
+        b0k_raw = tl.load(k_byte_ptrs, mask=n_mask_2d, other=0).to(tl.int32)
+        b1k_raw = tl.load(k_byte_ptrs + 16, mask=n_mask_2d, other=0).to(tl.int32)
+        b2k_raw = tl.load(k_byte_ptrs + 32, mask=n_mask_2d, other=0).to(tl.int32)
 
-    m_ij = tl.max(scores, axis=1)
-    m_new = tl.maximum(m_i, m_ij)
-    alpha = tl.exp(m_i - m_new)
-    p = tl.exp(scores - m_new[:, None])
-    l_i = l_i * alpha + tl.sum(p, axis=1)
-    m_i = m_new
+        b0k = (b0k_raw >> bit_shift) & 1
+        b1k = (b1k_raw >> bit_shift) & 1
+        b2k = (b2k_raw >> bit_shift) & 1
+        k_centroids = _bits_to_centroid(b0k, b1k, b2k)
 
-    v_block_base = V_planes_ptr + v_base + block_n_start * stride_vn
-    v_byte_ptrs = (
-        v_block_base
-        + n_range[:, None] * stride_vn
-        + byte_in_plane[None, :]
-    )
-    b0v_raw = tl.load(v_byte_ptrs, mask=n_mask_2d, other=0).to(tl.int32)
-    b1v_raw = tl.load(v_byte_ptrs + 16, mask=n_mask_2d, other=0).to(tl.int32)
-    b2v_raw = tl.load(v_byte_ptrs + 32, mask=n_mask_2d, other=0).to(tl.int32)
-    b0v = (b0v_raw >> bit_shift) & 1
-    b1v = (b1v_raw >> bit_shift) & 1
-    b2v = (b2v_raw >> bit_shift) & 1
-    v_centroids = _bits_to_centroid(b0v, b1v, b2v)
+        raw_scores = tl.dot(q, k_centroids.to(tl.float16).T, out_dtype=tl.float32)
+        k_norms_block = tl.load(
+            K_norms_ptr + kn_base + (block_n_start + n_range) * stride_knn,
+            mask=n_mask,
+            other=0.0,
+        )
+        scores = raw_scores * (k_norms_block * sm_scale)[None, :]
+        scores = tl.where(n_mask[None, :], scores, -1e9)
 
-    v_norms_block = tl.load(
-        V_norms_ptr + vn_base + (block_n_start + n_range) * stride_vnn,
-        mask=n_mask,
-        other=0.0,
-    )
-    p_scaled = p * v_norms_block[None, :]
-    acc = acc * alpha[:, None] + tl.dot(
-        p_scaled.to(tl.float16), v_centroids.to(tl.float16), out_dtype=tl.float32
-    )
+        m_ij = tl.max(scores, axis=1)
+        m_new = tl.maximum(m_i, m_ij)
+        alpha = tl.exp(m_i - m_new)
+        p = tl.exp(scores - m_new[:, None])
+        l_i = l_i * alpha + tl.sum(p, axis=1)
+        m_i = m_new
+
+        v_block_base = V_planes_ptr + v_base + block_n_start * stride_vn
+        v_byte_ptrs = (
+            v_block_base
+            + n_range[:, None] * stride_vn
+            + byte_in_plane[None, :]
+        )
+        b0v_raw = tl.load(v_byte_ptrs, mask=n_mask_2d, other=0).to(tl.int32)
+        b1v_raw = tl.load(v_byte_ptrs + 16, mask=n_mask_2d, other=0).to(tl.int32)
+        b2v_raw = tl.load(v_byte_ptrs + 32, mask=n_mask_2d, other=0).to(tl.int32)
+        b0v = (b0v_raw >> bit_shift) & 1
+        b1v = (b1v_raw >> bit_shift) & 1
+        b2v = (b2v_raw >> bit_shift) & 1
+        v_centroids = _bits_to_centroid(b0v, b1v, b2v)
+
+        v_norms_block = tl.load(
+            V_norms_ptr + vn_base + (block_n_start + n_range) * stride_vnn,
+            mask=n_mask,
+            other=0.0,
+        )
+        p_scaled = p * v_norms_block[None, :]
+        acc = acc * alpha[:, None] + tl.dot(
+            p_scaled.to(tl.float16), v_centroids.to(tl.float16), out_dtype=tl.float32
+        )
 
     m_ptr = (
         Partial_m_ptr
@@ -854,6 +860,7 @@ def turboquant_attention_fwd(
     sm_scale: Optional[float] = None,
     BLOCK_M: Optional[int] = None,
     BLOCK_N: Optional[int] = None,
+    BLOCK_KV: Optional[int] = None,
     use_split_k: bool = True,
 ) -> torch.Tensor:
     """
@@ -903,7 +910,9 @@ def turboquant_attention_fwd(
     if use_splitk_path:
         split_block_n = BLOCK_N if BLOCK_N is not None else 64
         split_block_m = BLOCK_M if BLOCK_M is not None else 16
-        n_splits = triton.cdiv(S_k, split_block_n)
+        split_kv = BLOCK_KV if BLOCK_KV is not None else 2048
+        split_kv = max(split_kv, split_block_n)
+        n_splits = triton.cdiv(S_k, split_kv)
 
         partial_m = torch.empty((B, H, triton.cdiv(S_q, split_block_m), n_splits, split_block_m),
                                 dtype=torch.float32, device=q.device)
@@ -927,6 +936,7 @@ def turboquant_attention_fwd(
             head_dim=D,
             BLOCK_M=split_block_m,
             BLOCK_N=split_block_n,
+            BLOCK_KV=split_kv,
             sm_scale=sm_scale,
         )
 

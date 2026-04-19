@@ -42,14 +42,11 @@ Expected validation result: all tests pass.
 - Target arch: `gfx942:sramecc+:xnack-`
 - Build flags are defined in `build_mi300x.sh`
 
-## Important ABI Note
+## Important ABI note
 
-Do not `ctypes`-load `libturboquant_mi300x.so` in the same Python process as PyTorch in this environment.
+Avoid ``ctypes``-loading ``libturboquant_mi300x.so`` into the same Python process as PyTorch unless the **HIP / code-object** build matches the **runtime shipped with that PyTorch** — mismatches surface as **`hipErrorNoBinaryForGpu (209)`**.
 
-- System ROCm: 7.2
-- PyTorch bundled ROCm: 6.2
-
-This mismatch can trigger `hipErrorNoBinaryForGpu (209)` when loading the shared object. For Python integration, use `kernels/turboquant_mi300x.py` (pure PyTorch path).
+**Canonical workflow:** build and run inside **ROCm 7.2 Primus** (`docker_run_amd_mi300x.sh`). For Python hot paths, use **`kernels/turboquant_mi300x.py`** (pure PyTorch).
 
 ## Common Workflow
 

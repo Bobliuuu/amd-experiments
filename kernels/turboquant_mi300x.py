@@ -6,11 +6,11 @@ All tensor operations route through torch.matmul → rocBLAS → MFMA on gfx942,
 providing hardware-accelerated rotation without a custom kernel binary.
 
 Why not the HIP .so?
-  libturboquant_mi300x.so is compiled with system ROCm 7.2. PyTorch bundles
-  libamdhip64.so built against ROCm 6.2. The fat-binary ABI is not
-  backward-compatible, so hipMemcpyToSymbol returns error 209 when both are
-  loaded in the same process. The standalone validation binary
-  (kernels/hip/tq_validate_mi300x) works fine because it uses only ROCm 7.2.
+  ``libturboquant_mi300x.so`` may be built with the system **ROCm 7.2** ``hipcc`` (often **COV6**),
+  while the **HIP runtime inside the running Python process** (loaded with PyTorch) may only accept
+  **COV5** objects for module load — then ``hipMemcpyToSymbol`` / module load can return **error 209**.
+  Standalone binaries under ``kernels/hip/`` link one coherent stack. This module keeps the rotation on
+  **torch.matmul → rocBLAS → MFMA** so Python stays on a single runtime.
 
 Public API
 ----------

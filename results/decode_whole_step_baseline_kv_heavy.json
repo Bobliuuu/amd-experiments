@@ -1,0 +1,74 @@
+{
+  "decode_whole_step_phase": "golden_baseline",
+  "time_iso": "2026-04-19T08:07:34Z",
+  "provenance": {
+    "source_file": "results/decode_whole_step_baseline_kv_heavy.json",
+    "note": "Frozen kv-heavy recipe: input_len=1024, output_len=256, num_prompts=32, Mistral-7B-v0.1",
+    "dispatch_log": "results/logs/decode_whole_step_dispatch_kv_heavy.log (after run_decode_whole_step_baseline_kv_heavy.sh)"
+  },
+  "model": "mistralai/Mistral-7B-v0.1",
+  "input_len": 1024,
+  "output_len": 256,
+  "num_prompts": 32,
+  "device": "AMD Instinct MI300X VF",
+  "results": [
+    {
+      "backend": "fp16",
+      "elapsed_s": 4.648,
+      "throughput_output_tps": 1762.7,
+      "vram_peak_gb": 30.66,
+      "engine_load_s": 8.5,
+      "enforce_eager": true,
+      "max_model_len": 8192,
+      "num_prompts": 32,
+      "use_turboquant": false,
+      "fused": false,
+      "weight_quantization": "",
+      "llm_kwargs_dropped": [
+        "max_model_len"
+      ],
+      "max_num_batched_tokens": null,
+      "max_num_seqs": null
+    },
+    {
+      "backend": "turboquant_decompress",
+      "elapsed_s": 4.238,
+      "throughput_output_tps": 1933.2,
+      "vram_peak_gb": 59.92,
+      "engine_load_s": 4.08,
+      "enforce_eager": true,
+      "max_model_len": 8192,
+      "num_prompts": 32,
+      "use_turboquant": true,
+      "fused": false,
+      "weight_quantization": "",
+      "llm_kwargs_dropped": [
+        "kv_cache_dtype",
+        "max_model_len"
+      ],
+      "max_num_batched_tokens": null,
+      "max_num_seqs": null
+    },
+    {
+      "backend": "turboquant_fused",
+      "elapsed_s": 4.279,
+      "throughput_output_tps": 1914.5,
+      "vram_peak_gb": 89.12,
+      "engine_load_s": 4.18,
+      "enforce_eager": true,
+      "max_model_len": 8192,
+      "num_prompts": 32,
+      "use_turboquant": true,
+      "fused": true,
+      "weight_quantization": "",
+      "llm_kwargs_dropped": [
+        "kv_cache_dtype",
+        "max_model_len"
+      ],
+      "max_num_batched_tokens": null,
+      "max_num_seqs": null
+    }
+  ],
+  "gpu_memory_utilization": 0.15,
+  "vllm_init_free_memory_note": "After cleanup torch mem_get_info ~99% free; vLLM worker init can see ~20-30 GiB free during multi-backend same-process runs. VLLM_BENCH_GPU_MEM=0.15 used for stable 3-backend kv-heavy pass."
+}
