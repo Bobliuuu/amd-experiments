@@ -6,6 +6,7 @@ import {
   MathSection,
   CompressionLandscapeSection,
   ResultsSection,
+  DeploymentStoriesSection,
   ReasoningSection,
   ConclusionSection,
 } from "./components/ReportSections";
@@ -71,6 +72,7 @@ function Hero() {
           transition={{ duration: 0.5, delay: 0.75 }}>
           <a className="cta-primary" href="#problem">Read the Report</a>
           <a className="cta-ghost" href="#results">Jump to Results</a>
+          <a className="cta-ghost" href="#stories">Memory vs speed</a>
           <a className="cta-ghost" href="#figures">View Figures</a>
         </motion.div>
 
@@ -165,6 +167,7 @@ export default function App() {
           <MathSection />
           <CompressionLandscapeSection />
           <ResultsSection />
+          <DeploymentStoriesSection />
           <ReasoningSection />
           <ConclusionSection />
         </div>
@@ -180,9 +183,9 @@ export default function App() {
           color: "var(--text-muted)", fontSize: "0.76rem",
           fontFamily: "'JetBrains Mono',monospace", letterSpacing: "0.06em",
         }}>
-          <p>AMD MI300X · gfx942 · 192 GB HBM3 · PyTorch 2.5.1+rocm6.2 · Triton 3.1.0 · Mistral-7B-v0.1</p>
+          <p>AMD MI300X · gfx942 · 192 GB HBM3 · Primus ROCm 7.2 + PyTorch 2.10 · Mistral-7B-v0.1</p>
           <p style={{ marginTop: "0.4rem" }}>
-            TurboQuant · IsoQuant · PlanarQuant · RotorQuant — KV Cache Compression Benchmark · April 2026
+            TurboQuant · IsoQuant · PlanarQuant · RotorQuant — KV cache compression — April 2026 · vLLM TQ wiring + GQA fused decode; e2e tok/s still step-limited (see reports)
           </p>
         </footer>
       </div>

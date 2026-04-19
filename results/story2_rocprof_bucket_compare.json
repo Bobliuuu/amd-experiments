@@ -1,0 +1,46 @@
+{
+  "story2_phase": "rocprof_bucket_compare",
+  "source_summary": "/root/workspace/amd-experiments/results/bench_vllm_rocprof_timeline_summary.json",
+  "meta": {
+    "rocprof_kernel_trace": true,
+    "rocprof_hip_trace": false,
+    "enforce_eager": true,
+    "model": "mistralai/Mistral-7B-v0.1",
+    "input_len": 256,
+    "output_len": 64,
+    "num_prompts": 8
+  },
+  "interpretation": "When E2E tok/s is flat across TQ paths, gemm_hipblaslt+gemm_general often dominates top-kernel time; attention_named share rises with long KV / fused path only if attention is on the critical path.",
+  "modes": [
+    {
+      "mode": "fp16",
+      "bucket_share_pct_topk": {
+        "activation_elementwise": 6.24,
+        "attention_named": 2.12,
+        "gemm_hipblaslt": 53.92,
+        "other": 27.72
+      },
+      "top_kernel": "Cijk_Alik_Bljk_HHS_BH_Bias_HA_S_SAV_UserArgs_MT256x192x64_MI16x16x1_SN_LDSB1_AFC1_AFEM1_AFEM1_ASEM1_CLR1_CADS0_DTLA0_DTLB0_DTVA0_DTVB0_EPS0_FDSI0_GRPM1_GRVWA8_GRVWB8_GSUAMBSK_GLS0_ISA942_IU1_K1_LDSTI0_LBSPPA1024_LBSPPB256_LBSPPM0_LPA16_LPB16_LPM0_LRVW8_LWPMn1_MIAV0_MIWT8_6_MO40_NTn1_NTA0_NTB0_NTC0_NTD4_NTM0_NEPBS16_NLCA1_NLCB1_ONLL1_PGR2_PLR1_PKA1_SIA3_SS1_SPO0_SRVW0_SSO0_SVW8_SK0_SKFTR0_SKXCCM0_TLDS1_ULSGRO1_USL1_UIOFGRO0_USFGROn1_VSn1_VWA8_VWB2_WSGRA0_WSGRB0_WS64_WG32_8_1.kd"
+    },
+    {
+      "mode": "turboquant_decompress",
+      "bucket_share_pct_topk": {
+        "activation_elementwise": 6.34,
+        "attention_named": 2.1,
+        "gemm_hipblaslt": 53.8,
+        "other": 27.72
+      },
+      "top_kernel": "Cijk_Alik_Bljk_HHS_BH_Bias_HA_S_SAV_UserArgs_MT256x192x64_MI16x16x1_SN_LDSB1_AFC1_AFEM1_AFEM1_ASEM1_CLR1_CADS0_DTLA0_DTLB0_DTVA0_DTVB0_EPS0_FDSI0_GRPM1_GRVWA8_GRVWB8_GSUAMBSK_GLS0_ISA942_IU1_K1_LDSTI0_LBSPPA1024_LBSPPB256_LBSPPM0_LPA16_LPB16_LPM0_LRVW8_LWPMn1_MIAV0_MIWT8_6_MO40_NTn1_NTA0_NTB0_NTC0_NTD4_NTM0_NEPBS16_NLCA1_NLCB1_ONLL1_PGR2_PLR1_PKA1_SIA3_SS1_SPO0_SRVW0_SSO0_SVW8_SK0_SKFTR0_SKXCCM0_TLDS1_ULSGRO1_USL1_UIOFGRO0_USFGROn1_VSn1_VWA8_VWB2_WSGRA0_WSGRB0_WS64_WG32_8_1.kd"
+    },
+    {
+      "mode": "turboquant_fused",
+      "bucket_share_pct_topk": {
+        "activation_elementwise": 6.34,
+        "attention_named": 2.09,
+        "gemm_hipblaslt": 53.81,
+        "other": 27.78
+      },
+      "top_kernel": "Cijk_Alik_Bljk_HHS_BH_Bias_HA_S_SAV_UserArgs_MT256x192x64_MI16x16x1_SN_LDSB1_AFC1_AFEM1_AFEM1_ASEM1_CLR1_CADS0_DTLA0_DTLB0_DTVA0_DTVB0_EPS0_FDSI0_GRPM1_GRVWA8_GRVWB8_GSUAMBSK_GLS0_ISA942_IU1_K1_LDSTI0_LBSPPA1024_LBSPPB256_LBSPPM0_LPA16_LPB16_LPM0_LRVW8_LWPMn1_MIAV0_MIWT8_6_MO40_NTn1_NTA0_NTB0_NTC0_NTD4_NTM0_NEPBS16_NLCA1_NLCB1_ONLL1_PGR2_PLR1_PKA1_SIA3_SS1_SPO0_SRVW0_SSO0_SVW8_SK0_SKFTR0_SKXCCM0_TLDS1_ULSGRO1_USL1_UIOFGRO0_USFGROn1_VSn1_VWA8_VWB2_WSGRA0_WSGRB0_WS64_WG32_8_1.kd"
+    }
+  ]
+}

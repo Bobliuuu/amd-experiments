@@ -1,0 +1,127 @@
+{
+  "model": "mistralai/Mistral-7B-v0.1",
+  "quant_model": "TheBloke/Mistral-7B-v0.1-AWQ",
+  "quantization": "awq",
+  "input_len": 1024,
+  "output_len": 256,
+  "num_prompts": 32,
+  "max_model_len": 8192,
+  "max_num_batched_tokens": null,
+  "max_num_seqs": null,
+  "device": "AMD Instinct MI300X VF",
+  "enforce_eager": true,
+  "results": [
+    {
+      "backend": "fp16",
+      "elapsed_s": 4.653,
+      "throughput_output_tps": 1760.5,
+      "vram_peak_gb": 30.66,
+      "engine_load_s": 8.54,
+      "enforce_eager": true,
+      "max_model_len": 8192,
+      "num_prompts": 32,
+      "use_turboquant": false,
+      "fused": false,
+      "weight_quantization": "",
+      "llm_kwargs_dropped": [
+        "max_model_len"
+      ],
+      "max_num_batched_tokens": null,
+      "max_num_seqs": null
+    },
+    {
+      "backend": "turboquant_decompress",
+      "elapsed_s": 4.349,
+      "throughput_output_tps": 1883.5,
+      "vram_peak_gb": 30.66,
+      "engine_load_s": 8.39,
+      "enforce_eager": true,
+      "max_model_len": 8192,
+      "num_prompts": 32,
+      "use_turboquant": true,
+      "fused": false,
+      "weight_quantization": "",
+      "llm_kwargs_dropped": [
+        "kv_cache_dtype",
+        "max_model_len"
+      ],
+      "max_num_batched_tokens": null,
+      "max_num_seqs": null
+    },
+    {
+      "backend": "turboquant_fused",
+      "elapsed_s": 4.403,
+      "throughput_output_tps": 1860.8,
+      "vram_peak_gb": 30.66,
+      "engine_load_s": 8.32,
+      "enforce_eager": true,
+      "max_model_len": 8192,
+      "num_prompts": 32,
+      "use_turboquant": true,
+      "fused": true,
+      "weight_quantization": "",
+      "llm_kwargs_dropped": [
+        "kv_cache_dtype",
+        "max_model_len"
+      ],
+      "max_num_batched_tokens": null,
+      "max_num_seqs": null
+    },
+    {
+      "backend": "quant_fp16_kv",
+      "elapsed_s": 6.763,
+      "throughput_output_tps": 1211.4,
+      "vram_peak_gb": 30.56,
+      "engine_load_s": 9.43,
+      "enforce_eager": true,
+      "max_model_len": 8192,
+      "num_prompts": 32,
+      "use_turboquant": false,
+      "fused": false,
+      "weight_quantization": "awq",
+      "llm_kwargs_dropped": [
+        "max_model_len"
+      ],
+      "max_num_batched_tokens": null,
+      "max_num_seqs": null
+    },
+    {
+      "backend": "quant_turboquant_decompress",
+      "elapsed_s": 6.587,
+      "throughput_output_tps": 1243.6,
+      "vram_peak_gb": 30.56,
+      "engine_load_s": 9.35,
+      "enforce_eager": true,
+      "max_model_len": 8192,
+      "num_prompts": 32,
+      "use_turboquant": true,
+      "fused": false,
+      "weight_quantization": "awq",
+      "llm_kwargs_dropped": [
+        "kv_cache_dtype",
+        "max_model_len"
+      ],
+      "max_num_batched_tokens": null,
+      "max_num_seqs": null
+    },
+    {
+      "backend": "quant_turboquant_fused",
+      "elapsed_s": 6.586,
+      "throughput_output_tps": 1243.9,
+      "vram_peak_gb": 30.56,
+      "engine_load_s": 9.59,
+      "enforce_eager": true,
+      "max_model_len": 8192,
+      "num_prompts": 32,
+      "use_turboquant": true,
+      "fused": true,
+      "weight_quantization": "awq",
+      "llm_kwargs_dropped": [
+        "kv_cache_dtype",
+        "max_model_len"
+      ],
+      "max_num_batched_tokens": null,
+      "max_num_seqs": null
+    }
+  ]
+}

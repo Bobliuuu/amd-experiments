@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="500" viewBox="0 0 900 500">
+  <rect width="900" height="500" fill="#12151c"/>
+  <text x="450" y="40" text-anchor="middle" fill="#e8eaef" font-family="system-ui,Segoe UI,sans-serif" font-size="21" font-weight="600">End-to-end vLLM: output tok/s (unchanged across backends)</text>
+  <text x="450" y="66" text-anchor="middle" fill="#9aa0a6" font-family="JetBrains Mono,Consolas,monospace" font-size="12">Mistral-7B-v0.1, input_len=1024, output_len=256, num_prompts=32, AMD MI300X VF</text>
+  <text x="450" y="86" text-anchor="middle" fill="#6b7280" font-family="JetBrains Mono,monospace" font-size="11">Artifact: results/bench_vllm_turboquant_ab_sweep_kv_heavy.json</text>
+  <line x1="120" y1="120" x2="120" y2="380" stroke="#2d333d"/>
+  <line x1="120" y1="380" x2="820" y2="380" stroke="#2d333d"/>
+  <text x="95" y="130" text-anchor="end" fill="#7a8190" font-size="11" font-family="JetBrains Mono">2440</text>
+  <text x="95" y="250" text-anchor="end" fill="#7a8190" font-size="11">2429</text>
+  <text x="95" y="385" text-anchor="end" fill="#7a8190" font-size="11">2418</text>
+  <rect x="200" y="294" width="130" height="86" rx="6" fill="#5b8def"/>
+  <text x="265" y="285" text-anchor="middle" fill="#fff" font-size="14" font-weight="600" font-family="JetBrains Mono">2425.3</text>
+  <text x="265" y="405" text-anchor="middle" fill="#9aa0a6" font-size="13">FP16</text>
+  <rect x="385" y="181" width="130" height="199" rx="6" fill="#3ddc84"/>
+  <text x="450" y="172" text-anchor="middle" fill="#fff" font-size="14" font-weight="600" font-family="JetBrains Mono">2434.7</text>
+  <text x="450" y="405" text-anchor="middle" fill="#9aa0a6" font-size="12">TQ decompress</text>
+  <rect x="570" y="252" width="130" height="128" rx="6" fill="#ed8b4f"/>
+  <text x="635" y="243" text-anchor="middle" fill="#fff" font-size="14" font-weight="600" font-family="JetBrains Mono">2428.8</text>
+  <text x="635" y="405" text-anchor="middle" fill="#9aa0a6" font-size="12">TQ fused</text>
+  <text x="450" y="455" text-anchor="middle" fill="#9aa0a6" font-size="13" font-family="sans-serif">Story 2 (speed): full-stack decode does not separate; non-KV work caps tok/s.</text>
+  <text x="450" y="480" text-anchor="middle" fill="#6b7280" font-size="11">Delta under half a percent: within run-to-run noise for this benchmark.</text>
+</svg>

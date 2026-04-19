@@ -43,7 +43,7 @@ import torch
 
 RESULTS_DIR = Path(__file__).parent.parent / "results"
 KERNELS_DIR = Path(__file__).parent.parent / "kernels"
-VLLM_BACKENDS_DIR = Path(__file__).parent.parent / "vllm" / "attention" / "backends"
+TQ_BACKENDS_DIR = Path(__file__).parent.parent / "tq_backends" / "attention" / "backends"
 RESULTS_DIR.mkdir(exist_ok=True)
 sys.path.insert(0, str(KERNELS_DIR))
 
@@ -60,13 +60,16 @@ def _register_isoquant_backend():
     VLLM_ATTENTION_BACKEND=ISOQUANT_ROCM is recognised.  This works for
     vLLM 0.6+ which uses a string-keyed registry dict.
     """
-    sys.path.insert(0, str(VLLM_BACKENDS_DIR.parent.parent))   # exposes vllm/ pkg
+    sys.path.insert(0, str(TQ_BACKENDS_DIR.parent.parent))   # repo root for tq_backends
     try:
-        from isoquant_rocm_attn import IsoQuantROCmAttentionBackend
+        from tq_backends.attention.backends.isoquant_rocm_attn import (
+            IsoQuantROCmAttentionBackend,
+        )
     except ImportError:
-        # Try from project-local path
-        sys.path.insert(0, str(VLLM_BACKENDS_DIR))
-        from isoquant_rocm_attn import IsoQuantROCmAttentionBackend
+        sys.path.insert(0, str(TQ_BACKENDS_DIR))
+        from tq_backends.attention.backends.isoquant_rocm_attn import (
+            IsoQuantROCmAttentionBackend,
+        )
 
     # vLLM 0.6+ registry lives in vllm.attention.backends.utils or
     # vllm.attention.selector — try both locations.

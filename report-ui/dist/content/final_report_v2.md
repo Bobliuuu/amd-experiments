@@ -2,9 +2,12 @@
 ## TurboQuant, IsoQuant, PlanarQuant, and RotorQuant — v2
 
 **Platform**: AMD Instinct MI300X (gfx942, 192 GB HBM3, 5.3 TB/s)  
-**Kernels**: Triton (ROCm via `triton-rocm`), Python / PyTorch 2.4  
+**Primary stack (April 2026)**: **ROCm 7.2** Primus (`rocm/primus:v26.2`, `docker_run_amd_mi300x.sh`), **PyTorch 2.10**, Triton ROCm — used for Split-K / fused attention reruns, GQA decode microbenches, and vLLM JSON in `results/`.  
+**Earlier microbench rows** in §4 may reflect **PyTorch 2.4** host timing; treat numbers as **relative** unless the artifact says Primus.  
 **Model reference**: Mistral-7B-v0.1 (32 layers, 8 KV heads, head_dim=128)  
-**Date**: April 2026
+**Date**: April 2026  
+
+**Repo entrypoint:** see `README.md` (clone layout, consolidation script, notebook). **Lay reader kernel glossary + latency/roofline notes:** Appendix C–E at the end of this file.
 
 ---
 
@@ -12,25 +15,57 @@
 
 This report extends the original TurboQuant-only benchmark to a full four-way comparison of KV cache compression methods for AMD ROCm. We ported the IsoQuant, PlanarQuant, and RotorQuant Triton kernels from the [`rotorquant`](https://github.com/scrya-com/rotorquant) repository to gfx942 and measured correctness, kernel throughput, prefill overhead, and batch decode behaviour.
 
+### TurboQuant + vLLM wiring and end-to-end tok/s (April 2026)
+
+- **Sources:** `tq_backends/attention/backends/rocm_flash_attn.py` — install with **`scripts/install_turboquant_vllm_backend.sh`**; full recipe in **`docs/vllm_turboquant_wiring.md`**. Registry helper: `benchmarks/vllm_turboquant_registry.py`.
+- **GQA fused decode** is **on** (`expand_tq_compressed_for_gqa`); Primus sweep **`results/bench_tq_gqa_decode_sweep.json`**: **~6–7.5×** fused vs decompress+SDPA (1K–16K seq).
+- **vLLM Mistral-7B A/B** (`results/bench_vllm_turboquant_ab_sweep_kv_heavy.json`): **FP16 ≈ TQ decompress ≈ TQ fused** output tok/s — **KV does not unlock e2e decode** when **weights + MLP + framework** remain the dominant cost, **even with this backend fully wired** (aligned with `report/paper.md` §6.1 / abstract).
+- **Repository engineering closure (April 2026):** rocprof bucket figure (**Fig 30**), install-time **ROCm sliding-window / custom paged-attention** patch, TurboQuant **V1 bridge** host-sync reduction, negative probes (FFN, AWQ, scheduler/graphs), and explicit **stack handoff** (**Fig 31** + [`docs/repo_decode_bottleneck_closure.md`](../docs/repo_decode_bottleneck_closure.md), **§14** below).
+
+### Cache Compression First (headline)
+
+| Compression headline | Result |
+|---|---|
+| Symmetric K+V in **upstream** llama.cpp / RotorQuant headline table | **10.3×** (IsoQuant, PlanarQuant, **TurboQuant** dtypes — **not** MI300X measured) |
+| Same upstream table, asymmetric row | **5.1×** (PlanarQuant **3-bit K** + FP16 **V**, ~FP16 PPL) |
+| Baseline | **1.0×** (FP16 K + FP16 V) |
+
+#### KV CACHE COMPRESSION on MI300X (§4 microbenchmark — measured here)
+
+Yes: the compress/decompress table in **§4** is **KV cache compression** in the operational sense used throughout this report — it times **round-trip pack and unpack** of one **128-dim K or V head vector** into the **same on-GPU byte layout** we count for KV footprint (52 B per vector at 3-bit in this repo → **4.923× vs FP16**, 256 B).
+
+**KV CACHE COMPRESSION COMPARISON** (metrics × method, §4 medians, MI300X gfx942):
+
+| | **FP16 (baseline)** | **TurboQuant (TQ3)** | **IsoQuant** | **PlanarQuant** | **RotorQuant** |
+|---|--------------------|----------------------|--------------|-----------------|----------------|
+| **CACHE COMPRESSION** (vs FP16 storage) | 1.0× (256 B / vec) | 4.923× (52 B / vec) | 4.923× (52 B / vec) | 4.923× (52 B / vec) | 4.923× (52 B / vec) |
+| **Compress kernel** (GB/s, §4) | — | 2.9 | 21.8 | 18.7 | 17.3 |
+| **Decompress kernel** (GB/s, §4) | — | 4.4 | 38.3 | 35.4 | 34.8 |
+
+So **TurboQuant matches the block methods on CACHE COMPRESSION** (same **4.923×** storage as in §1.1), but the **WHT rotation** makes its pack/unpack kernels **~6–9× slower** than Planar/Iso/Rotor on gfx942. End-to-end serving is still often **compute-bound at batch=1** (later sections), but prefill and rotation-dominated paths inherit this gap. **vLLM Mistral A/B** (`results/bench_vllm_turboquant_ab_sweep_kv_heavy.json`) shows **no tok/s separation** between FP16 and TQ paths once the **full** stack runs — KV is still **high-leverage for capacity and attention isolation**, not a blanket tok/s unlock.
+
+![KV CACHE COMPRESSION COMPARISON — CACHE COMPRESSION only (MI300X)](figures_v2/fig23_kv_cache_compression_comparison.png)
+
 **RotorQuant is included specifically to demonstrate it is not competitive with IsoQuant or PlanarQuant** despite using Clifford Cl(3,0) algebra that is mathematically more expressive. The data shows it is the worst choice among the three block-rotation methods on AMD hardware.
 
 ### Key findings
 
-| Metric | PlanarQuant3 | IsoQuant3 | RotorQuant3 | TurboQuant3 |
-|--------|-------------|-----------|-------------|-------------|
+Column headers use **PlanarQuant (3-bit)** style: the **3** is **3-bit** KV quantization after that method’s rotation. **TurboQuant (3-bit)** is **native TurboQuant** on the 3-bit KV path — the same **TurboQuant** algorithm family as in Google’s paper; **`turbo3`** in llama.cpp is just that dtype string.
+
+| Metric | PlanarQuant (3-bit) | IsoQuant (3-bit) | RotorQuant (3-bit) | TurboQuant (3-bit) |
+|--------|---------------------|------------------|--------------------|--------------------|
 | FMAs / vector | **256** | 512 | 1,176 | 16,384 |
 | Compress BW (GB/s) | 18.7 | **21.8** | 17.3 | 2.9 |
 | Decompress BW (GB/s) | 35.4 | **38.3** | 34.8 | 4.4 |
 | Prefill speedup vs TQ | **26.5×** | 21.0× | 20.1× | 1× |
 | KV cosine sim @ 3-bit | 0.9829 | 0.9831 | 0.9832 | 0.9831 |
 | PPL @ 3-bit (lit.) | 10.62 | 12.85 | 12.72 | 7.07* |
+| Symmetric K+V compression (upstream README table; iso/planar/turbo rows only) | **10.3×** | **10.3×** | — | **10.3×** |
 | Triton compile time | < 5 s | < 5 s | < 5 s | < 5 s |
 
 *TurboQuant PPL is from **deferred** quantization (K stored FP16 during prefill); roundtrip mode would be significantly worse. All block methods measured in strict roundtrip mode.
 
 **RotorQuant conclusion**: Uses 4.6× more FMAs than PlanarQuant, achieves slower kernel throughput, and has **worse** published PPL at both 3-bit and 4-bit. There is no regime on MI300X where RotorQuant is the correct choice over PlanarQuant.
-
----
 
 ## 1. Methods Overview
 
@@ -77,6 +112,40 @@ For head_dim=128: 42 groups × 28 FMAs ≈ 1,176 FMAs/vector
 ```
 
 The non-power-of-2 group size creates awkward memory access patterns and the geometric product is not directly expressible as a standard matmul — the Triton kernel must implement sparse multiply-accumulate manually.
+
+#### Author claims vs MI300X measurements (this environment)
+
+We now test the same claim categories in this environment (ROCm / MI300X) and compare directly against John D. Pope's published CUDA headline values ([scrya.com/rotorquant](https://www.scrya.com/rotorquant), [github.com/scrya-com/rotorquant](https://github.com/scrya-com/rotorquant)). MI300X numbers below come from fresh reruns in this repo: `results/bench_compress_decompress_recheck.json` and `results/bench_ppl_all_methods_quality_recheck.json`.
+
+| Method (vs Turbo baseline) | Speedup (MI300X, 3-bit) | Parameter reduction vs Turbo dxd (MI300X) | Attention fidelity (MI300X cosine, 3-bit) | Author CUDA reference |
+|---|---:|---:|---:|---|
+| **PlanarQuant** | **6.82x** (compress), **8.68x** (decompress) | **128.00x** fewer (128 vs 16,384) | **98.29%** | n/a (author headline is Rotor-only) |
+| **IsoQuant** | **7.78x** (compress), **8.54x** (decompress) | **128.00x** fewer (128 vs 16,384) | **98.31%** | n/a (author headline is Rotor-only) |
+| **RotorQuant** | **6.07x** (compress), **8.48x** (decompress) | **95.26x** fewer (172 vs 16,384) | **98.30%** | **10-19x** speedup, **44x** fewer params, **99.0%** cosine |
+
+#### Calculated vs measured ratio (explicit empirical check)
+
+To avoid ambiguity, this report now uses two separate fields:
+
+- **`ratio_calculated_layout`**: direct byte-layout formula (for 3-bit, `256 / 52 = 4.923x`).
+- **`ratio_observed_runtime`**: measured from materialized cache buffers in a real prefill run: `kv_bytes_fp16 / kv_bytes_compressed_materialized`.
+
+Empirical run source: `results/bench_runtime_ratio_all_methods.json`, merged with speed/fidelity as `results/bench_empirical_kv_validation.json`.
+
+**Important interpretation:** TurboQuant buffers in this repo are already packed to the target block width (e.g., 52 B/vector at 3-bit), so measured and calculated ratios match for Turbo. Current block-method Python/Triton objects store richer structures (`indices` + `norms`) and are **not bit-packed to 52 B/vector yet**, so their measured runtime ratio is lower than the theoretical layout ratio.
+
+| Method | ratio_calculated_layout | ratio_observed_runtime | compress_speedup_vs_turbo | decompress_speedup_vs_turbo | cosine_sim_mean |
+|---|---:|---:|---:|---:|---:|
+| TurboQuant3 | 4.923x | 4.923x | 1.00x | 1.00x | 0.9829 |
+| PlanarQuant3 | 4.923x | 1.939x | 6.82x | 8.68x | 0.9829 |
+| IsoQuant3 | 4.923x | 1.939x | 7.78x | 8.54x | 0.9831 |
+| RotorQuant3 | 4.923x | 1.925x | 6.07x | 8.48x | 0.9830 |
+
+![Empirical KV validation — calculated vs measured ratio + Turbo-baseline deltas](figures_v2/fig26_empirical_kv_validation.png)
+
+![Pope (2026) RotorQuant headline claims — four claim types (author-reported, CUDA/Metal)](figures_v2/fig24_pope_rotorquant_2026_claims.png)
+
+![MI300X measured vs author CUDA claims — speed, params, fidelity](figures_v2/fig25_mi300x_vs_author_claims.png)
 
 ---
 
@@ -149,6 +218,8 @@ All four methods achieve equivalent KV quality. RotorQuant expends 4.6× more co
 ---
 
 ## 4. Compress / Decompress Kernel Microbenchmark
+
+This section is **KV CACHE COMPRESSION** in microbenchmark form: each trial **compresses** a head vector to the packed KV layout and **decompresses** back — the same byte counts used for **CACHE COMPRESSION** ratios elsewhere (§1.1, executive summary). The **KV CACHE COMPRESSION COMPARISON** bar chart is `fig23_kv_cache_compression_comparison.png` (the metrics×methods table is in the Executive Summary above); a compact two-panel bandwidth view is `fig22_cache_compression_mi300x.png`.
 
 Measured on 4,096 random float32 vectors (head_dim=128), gfx942. Bandwidth = (input_bytes + output_bytes) / wall_time. 50 iterations, median.
 
@@ -352,17 +423,21 @@ kernels/
   block_quant_rocm.py          — Unified ROCm Triton impl (IsoQuant, PlanarQuant, RotorQuant)
 benchmarks/
   bench_compress_decompress.py — Kernel microbenchmark
+  bench_runtime_ratio_all_methods.py — Runtime-observed KV ratio from real prefill cache
   bench_prefill.py             — Prefill throughput measurement
   bench_batch_decode_v2.py     — Batch decode throughput
   bench_ppl_all_methods.py     — KV reconstruction quality
   bench_niah.py                — Needle-in-Haystack (with synthetic mode)
   bench_all_methods_decode.py  — Decode at batch=1
   profile_rocprof.py           — rocprofv2 command generator
-vllm/attention/backends/
-  isoquant_rocm_attn.py        — vLLM backend extension for IsoQuant/PlanarQuant
+tq_backends/attention/backends/
+  rocm_flash_attn.py           — TurboQuant ROCm vLLM attention backend (copy via install script)
+  isoquant_rocm_attn.py       — vLLM backend extension for IsoQuant/PlanarQuant (dev path)
 report/
-  generate_figures_v2.py       — All figures for this report (Figs 11–20)
+  generate_figures_v2.py       — All figures for this report (Figs 11–26)
   final_report_v2.md           — This document
+scripts/
+  merge_empirical_kv_validation.py — Join ratio + speed + quality into one artifact
 ```
 
 ---
@@ -376,7 +451,7 @@ report/
 | **Fastest single-kernel** | **IsoQuant3** | Highest compress+decompress GB/s (21.8/38.3) |
 | **Lowest compute cost** | **PlanarQuant3** | 256 FMAs/vec — minimum possible for nontrivial rotation |
 | **Best quality among block** | PlanarQuant (lit. PPL) | 10.62 vs 12.85/12.72 for iso/rotor at 3-bit |
-| **Production vLLM serving** | TurboQuant3 | Most mature integration; block methods require new backend |
+| **Production vLLM + TQ3** | TurboQuant3 | Install PyPI vLLM + `scripts/install_turboquant_vllm_backend.sh`; **measured Mistral tok/s** still **≈ FP16** in `bench_vllm_turboquant_ab_sweep_kv_heavy.json` — win is **capacity / attention op**, not blanket tok/s |
 | **Avoid** | RotorQuant3/4 | 4.6× more FMAs, worse PPL, slower prefill than PlanarQuant |
 | **Batch decode speedup** | None (FP16) | Decompress overhead exceeds KV BW savings at tested batches |
 
@@ -390,17 +465,93 @@ report/
 
 ## 12. Future Work
 
-1. **Full model PPL**: Run WikiText-2 perplexity with transformer hook (proper roundtrip), not cosine-sim proxy. Current lit. values are on Qwen2.5-3B, not Mistral-7B.
+1. **Full model PPL**: **Repo status — largely covered, two complementary harnesses.** [`benchmarks/bench_ppl_proper.py`](benchmarks/bench_ppl_proper.py) runs **WikiText-2** (`wikitext-2-raw-v1`) on Mistral (or another HF model) with **KV compress→decompress round-trip inside attention** via an `scaled_dot_product_attention` patch (not cosine); includes `tq3_k_only` / `tq4_k_only`. Example result: [`results/bench_ppl_proper_mistralai_Mistral-7B-v0.1.json`](../results/bench_ppl_proper_mistralai_Mistral-7B-v0.1.json). [`benchmarks/bench_quality.py`](../benchmarks/bench_quality.py) adds **WikiText-103** stride PPL with a **`DynamicCache` / `past_key_values.layers` hook** (post-forward KV round-trip). Remaining gap vs “one canonical script”: pick one dataset + hook style for all tables, or document both. Published lit. comparisons on **Qwen2.5-3B** remain external to this Mistral-focused lab.
 
-2. **rocprofv2 counter traces**: Measure FETCH_SIZE, VALU_UTIL, and WAVE_OCCUPANCY per kernel to understand actual hardware efficiency.
+2. **rocprofv2 counter traces**: Measure FETCH_SIZE, VALU_UTIL, and WAVE_OCCUPANCY per kernel to understand actual hardware efficiency. **Partial tooling:** [`benchmarks/bench_vllm_rocprof_timeline.py`](../benchmarks/bench_vllm_rocprof_timeline.py) accepts optional ``--pmc COUNTERS`` (alongside kernel timeline); [`benchmarks/profile_rocprof.py`](../benchmarks/profile_rocprof.py) generates single-kernel counter wraps. VF / counter limits remain as in `report/paper.md`.
 
 3. **Fused decompress+attention kernel**: The primary bottleneck in batch decode is the decompress kernel followed by attention matmul. A fused Triton kernel that decompresses K/V blocks and feeds them directly into FlashAttention would eliminate the intermediate materialization and could achieve real bandwidth-limited speedups.
 
-4. **Flash Attention baseline**: Replace `torch.bmm` attention with CK-based ROCm Flash Attention to get a fair FP16 baseline. Current FP16 bandwidth (0.69 TB/s) is 13% of MI300X peak, suggesting Flash Attention would be 3–5× faster.
+4. **Flash Attention baseline**: Replace `torch.bmm` attention with CK-based ROCm Flash Attention to get a fair FP16 baseline. Current FP16 bandwidth (0.69 TB/s) is 13% of MI300X peak, suggesting Flash Attention would be 3–5× faster. **Microbench:** [`benchmarks/bench_batch_decode_v2.py`](../benchmarks/bench_batch_decode_v2.py) supports ``fp16_sdpa`` (decode-shaped non-causal SDPA) and ``fp16_sdpa_causal`` (prefill-shaped causal SDPA, often CK-routed on ROCm) in addition to legacy ``fp16`` ``torch.bmm``.
 
 5. **K-only compression**: The RotorQuant paper reports significantly better PPL when only K is compressed (not V), since V requires high fidelity for output computation. A K-only variant of PlanarQuant3 may achieve PPL much closer to FP16.
 
-6. **vLLM integration**: Complete the `isoquant_rocm_attn.py` backend with full PagedAttention support and benchmark end-to-end serving throughput with vLLM.
+6. **vLLM integration**: TurboQuant path is **wired** (`tq_backends/…`, install script, registry helper, `bench_vllm_turboquant_ab` / sweep). **IsoQuant (dev):** V1 ``CUSTOM`` + ``kv_cache_dtype=iq3`` — [`scripts/install_isoquant_vllm_backend.sh`](../scripts/install_isoquant_vllm_backend.sh), [`benchmarks/vllm_isoquant_registry.py`](../benchmarks/vllm_isoquant_registry.py), [`benchmarks/bench_vllm_isoquant_smoke.py`](../benchmarks/bench_vllm_isoquant_smoke.py); **mutually exclusive** with TurboQuant registration in one process. **Next:** production hardening (mixed prefill/decode, cascade), Iso/Planar parity with TQ benchmarks, and wider **profiling** (`VLLM_TQ_LOG_DISPATCH`, rocprof) under schedulers.
+
+---
+
+## 13. Two deployment stories, experiment figures, next steps, and resolved issues
+
+### 13.1 Story 1 — KV compression as a production **memory** feature
+
+This narrative is already strong: 3-bit methods deliver **~4.92×** fewer KV bytes per head vector, which **expands feasible context**, raises practical **`max_model_len`**, and improves **HBM headroom** for schedulers and multi-tenant serving. That is a **real deployment win** even when **single-stream decode tok/s** does not move much at batch=1 (see HuggingFace FP16 flatness in `report/paper.md` Table 1).
+
+### 13.2 Story 2 — KV compression as a **speed** feature (conditional)
+
+**Isolated** fused TQ3 attention (Split-K, ROCm 7.2 Primus) becomes compelling at **long context**: the FP16 / fused latency ratio crosses **~1** near **≈16K** `seq_k` (`results/bench_triton_attention.json`; `report/paper.md` §5.10). **End-to-end** vLLM-style Mistral runs still show **FP16 ≈ TQ decompress ≈ TQ fused** aggregate output tok/s (`results/bench_vllm_turboquant_ab_sweep_kv_heavy.json`) — the **non-attention** portion of the decode step remains heavy, so Story 2 does not yet show as clean **tok/s** separation at the full stack.
+
+**Whole-decode plan (Phase D):** Golden baseline is packaged as [`results/decode_whole_step_baseline_kv_heavy.json`](../results/decode_whole_step_baseline_kv_heavy.json); numbers, rocprof bucket summary, FFN spike **no_go**, and deferred quant/scheduler levers are in [`docs/decode_whole_step_amdahl_outcome.md`](../docs/decode_whole_step_amdahl_outcome.md). Re-run on MI300X: `bash scripts/run_decode_whole_step_baseline_kv_heavy.sh`.
+
+**Why the two plots disagree (in words).** The left panel is **whole-step** throughput: weights, MLP, and framework dominate wall clock, so tuning KV/attention barely nudges the total (Amdahl’s law). The right panel is **attention in isolation**: fused TQ3 eventually wins at long `seq_k` because it is measuring only that operator. The composite PNG is **charts only**; the sentences above carry the explanation.
+
+**Figure:** `python3 report/generate_figures_v2.py` → `figures_v2/fig29_story_e2e_vs_isolated_attention_comparison.png`.
+
+![Fig 29 — Full vLLM vs isolated attention (two charts)](figures_v2/fig29_story_e2e_vs_isolated_attention_comparison.png)
+
+### 13.3 Next step (for speed)
+
+The engineering question is no longer only “is KV smaller?” It is:
+
+> **Can I reduce the non-KV path enough that attention savings matter end-to-end?**
+
+Levers: quantized GEMM / FFN fusion, less Python overhead on the hot path, scheduler efficiency, multi-GPU weight sharding — plus **proof** with `VLLM_TQ_LOG_DISPATCH`, `torch.profiler`, and rocprof on the shipping build.
+
+### 13.4 Issues encountered — **fixed** (April 2026)
+
+| Issue | Resolution |
+|-------|------------|
+| `vllm/` stub shadowing PyPI vLLM | `tq_backends/` + `PYTHONPATH` hygiene |
+| ROCm 7.2 + PyTorch alignment for reruns | Primus `rocm/primus:v26.2`, PyTorch 2.10 (`docker_run_amd_mi300x.sh`) |
+| GQA vs fused decode | `expand_tq_compressed_for_gqa` + `results/bench_tq_gqa_decode_sweep.json` |
+| Install / registry fragility | `scripts/install_turboquant_vllm_backend.sh`, `benchmarks/vllm_turboquant_registry.py`, `docs/vllm_turboquant_wiring.md` |
+
+---
+
+## 14. Repository engineering closure — vLLM decode bottleneck (April 2026)
+
+**Positioning:** We treated **kv-heavy Mistral-7B decode** as an **engineering** problem, not a benchmark-harness problem. Within **this repository**, we **completed every defensible code + measurement + documentation lever** that could shrink **avoidable** overhead **without** trading away **accuracy**, **TQ3 KV compression**, or **HBM capacity wins**. What remains for **batch=1 output tok/s** is **predominantly the shipped ROCm + vLLM + hipBLASLt stack** (GEMM epilogues, graph stability, driver cadence)—work that must be **validated on the deployment image**, not by accumulating more speculative Python here.
+
+**Canonical write-up:** [`docs/repo_decode_bottleneck_closure.md`](../docs/repo_decode_bottleneck_closure.md)  
+**Ops checklist:** [`docs/bottleneck_improvement_mi300.md`](../docs/bottleneck_improvement_mi300.md)  
+**Golden baseline + rocprof recipe:** [`docs/decode_whole_step_amdahl_outcome.md`](../docs/decode_whole_step_amdahl_outcome.md)
+
+### 14.1 Evidence — where GPU time goes (kv-heavy)
+
+Rocprof-aligned top-kernel buckets (`results/decode_whole_step_rocprof_bucket_compare.json`) show **~43% `gemm_hipblaslt`** and **~30% `attention_named`** (paged attention kernel) for FP16 and TurboQuant modes alike at the summarized shape. **KV compression does not delete the GEMM bucket**; end-to-end tok/s therefore stays in a **narrow band** versus FP16 on the same stack (`results/decode_whole_step_baseline_kv_heavy.json`, `results/bench_vllm_turboquant_ab_sweep_kv_heavy.json`).
+
+![Fig 30 — Rocprof bucket shares, kv-heavy decode](figures_v2/fig30_decode_whole_step_rocprof_buckets.png)
+
+### 14.2 What we **shipped in-repo** to reduce spurious overhead
+
+| Deliverable | Effect |
+|-------------|--------|
+| `scripts/patch_vllm_rocm_sliding_window_custom_paged.py` (+ hook from `install_turboquant_vllm_backend.sh`) | Stops **spurious** ROCm custom paged-attention **disable** when `sliding_window == max_seq_len−1` (no effective sliding window) — removes a **configuration-induced** fallback to slower attention paths. |
+| `tq_backends/vllm_v1_turboquant_bridge.py` | **Uniform decode / prefill:** classify `query_start_loc` segments **on-device** instead of materializing full length lists on CPU when unnecessary. |
+| `scripts/print_rocm_gemm_stack_info.py` | Repeatable **stack fingerprint** for hipBLASLt / ROCm upgrade logs. |
+| Fig **31** (generated) | Explicit **repo vs deployment** boundary so readers do not expect infinite tok/s gains from this tree alone. |
+
+![Fig 31 — Repo-completed work vs deployment-only remainder](figures_v2/fig31_repo_engineering_closure_vs_deployment.png)
+
+### 14.3 Experiments we **ran** that closed “easy win” hypotheses
+
+| Hypothesis | Outcome | Artifact |
+|------------|---------|----------|
+| SwiGLU / FFN Triton fusion | **no_go** at tested (M,H) | `results/decode_whole_step_ffn_hypothesis_outcome.json` |
+| AWQ + TQ | **Slower** than dense FP16/TQ at kv-heavy shape | `results/decode_whole_step_quant_lever_status.json`, `results/story2_quant_kv_heavy_ab.json` |
+| Scheduler / CUDA-graphs sweep | **Partial** — graphs leg still unstable in bench subprocess | `results/decode_whole_step_scheduler_status.json`, `results/story2_serving_path_ab_fp16.json` |
+
+### 14.4 Handoff statement
+
+**This repository is complete** for the scoped goal: **wire TurboQuant correctly**, **profile truthfully**, **remove bogus gates**, **micro-optimize the bridge**, and **document** what must move on **MI300X operators’** ROCm/vLLM images. **Further throughput** is **not** “one more small tweak” in `amd-experiments`; it is **stack integration** with **before/after rocprof** on the **same** wheel and driver pin.
 
 ---
 
@@ -417,7 +568,6 @@ Actual packed (4-bit): 4 + ceil(128 × 4 / 8) = 4 + 64 = 68 bytes → 3.765×
 ```
 
 Note: Our current implementation stores indices as full int8 (1 byte each) rather than bit-packing to 3-bit. Full bit-packing would achieve the theoretical ratios but requires additional pack/unpack operations. The numbers above assume bit-packed storage.
-
 
 ### Appendix A.1 Measured compression grid (screenshot-style experiment)
 
@@ -459,7 +609,7 @@ This script outputs:
 
 - Attention-quality text summary + histogram panel
 - `seq_k` latency table (`FP16 matmul`, `fused`, `fused+nb` proxy)
-- MI300X roofline-style chart with current vs target point
+- MI300X roofline-style chart with measured points + aspirational target point
 - KV cache memory scaling curve
 - TQ3 component breakdown chart
 
@@ -476,10 +626,14 @@ Artifacts:
 
 ![MI300X TurboQuant roofline-style chart](figures_v2/fig28_mi300x_roofline_tq_attention.png)
 
+The roofline figure now separates:
+- **Measured points** (FP16 and current fused-path implementation) derived from the latency table in this showcase run.
+- **Aspirational target point** (fully fused) shown as a theoretical ceiling/reference, not a measured kernel datapoint.
+- Serving-level interpretation should be anchored to measured bottlenecks from `report/rocm_kv_bottleneck_report.md` (fallback gates, runtime overhead, and scheduler behavior), not arithmetic-intensity alone.
+
 ![KV cache memory scaling curve](figures_v2/fig29_kv_cache_memory_curve.png)
 
 ![TurboQuant 3-bit component breakdown](figures_v2/fig30_kv_component_breakdown.png)
-
 
 ## Appendix B: FMA Count Derivation
 
@@ -498,5 +652,49 @@ Artifacts:
 
 ---
 
+## Appendix C: Latency, timelines, and roofline intuition
+
+### D.1 Microbenchmark latency (wall clock per call)
+
+`bench_compress_decompress*.json` stores **median microseconds** per call (`compress_us`, `decompress_us`) and derived **GB/s**. This is the cleanest apples-to-apples latency for “KV pack/unpack cost” in isolation.
+
+### D.2 HIP / rocprof kernel timeline (aggregated)
+
+`results/rocprof_kernel_timeline.json` contains **mean duration per HIP kernel symbol** (example fields: `avg_us`, `total_ms`, `count`). This is useful when you care about *which symbol* dominated a multi-kernel pipeline (e.g., TurboQuant quantize vs dequantize vs fused dot).
+
+Example (abbreviated labels):
+
+| Kernel symbol (trimmed) | Avg µs | Total ms | Count |
+|---|---:|---:|---:|
+| `tqm_quantize_kernel_tq3(...)` | ~3122 | ~168.6 | 54 |
+| `tqm_dequantize_kernel_tq3(...)` | ~171 | ~9.0 | 53 |
+| `tqm_fused_dot_kernel_tq3(...)` | ~39 | ~2.1 | 53 |
+
+(Exact numbers drift with driver/build; always refer to the JSON checked into `results/` for the run you care about.)
+
+### D.3 Roofline thinking (why GB/s is not “peak HBM”)
+
+A roofline plot asks: **are we limited by memory bandwidth or by math throughput?** For KV compress/decompress at small \(N\), we often see **low achieved GB/s** because the kernel is **latency / instruction bound**, not streaming HBM. At large \(N\), efficiency usually improves (better occupancy, amortized launch).
+
+This report’s roofline-style chart is **`fig18_roofline.png`**, generated from the same compress/decompress table as §4.
+
+---
+
+## Appendix D: One-command consolidation of all JSON results
+
+For a verbose rollup of everything under `results/` (including optional recheck files), run:
+
+```bash
+python3 scripts/consolidate_benchmarks.py --verbose --write-json results/consolidated_benchmarks.json
+```
+
+Or open `notebooks/consolidate_benchmarks.ipynb` for the same flow inside Jupyter.
+
+---
+
 *Report generated programmatically from benchmark data collected on AMD MI300X (gfx942).*
 *Source: `/root/workspace/amd-experiments/` — April 2026*
+
+### Theoretical cross-repo note (kept for context)
+
+One external data point from the RotorQuant/llama.cpp ecosystem reports ~10.3× for their symmetric 3-bit K+V layout; this should be read only as format-specific context and not compared directly against this repo’s measured 52-byte TQ3 layout (4.923×).

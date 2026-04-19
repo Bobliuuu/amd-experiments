@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="920" height="520" viewBox="0 0 920 520">
+  <rect width="920" height="520" fill="#12151c"/>
+  <text x="460" y="38" text-anchor="middle" fill="#e8eaef" font-family="system-ui,sans-serif" font-size="21" font-weight="600">Isolated attention: FP16 / fused TQ3 latency ratio</text>
+  <text x="460" y="64" text-anchor="middle" fill="#9aa0a6" font-family="JetBrains Mono,monospace" font-size="12">batch=1, S_q=1, H=32, D=128, Split-K Triton, MI300X VF</text>
+  <text x="460" y="84" text-anchor="middle" fill="#6b7280" font-family="JetBrains Mono,monospace" font-size="11">results/bench_triton_attention.json (ratio = fp16_ms / triton_ms; above 1 = fused faster)</text>
+  <line x1="100" y1="420" x2="860" y2="420" stroke="#2d333d"/>
+  <line x1="100" y1="420" x2="100" y2="140" stroke="#2d333d"/>
+  <text x="55" y="145" text-anchor="middle" fill="#7a8190" font-size="11" font-family="sans-serif" transform="rotate(-90 55 280)">FP16 / fused TQ3</text>
+  <text x="95" y="430" text-anchor="end" fill="#7a8190" font-size="10">0</text>
+  <text x="95" y="285" text-anchor="end" fill="#7a8190" font-size="10">1.0</text>
+  <text x="95" y="150" text-anchor="end" fill="#7a8190" font-size="10">2.2</text>
+  <line x1="100" y1="293" x2="860" y2="293" stroke="#ed8b4f" stroke-dasharray="6 4" opacity="0.7"/>
+  <text x="870" y="298" fill="#ed8b4f" font-size="11" font-family="sans-serif">1.0 crossover</text>
+  <polyline fill="none" stroke="#5b8def" stroke-width="3" points="180,384 300,363 500,213 620,178 740,180 800,152"/>
+  <circle cx="180" cy="384" r="6" fill="#5b8def"/><circle cx="300" cy="363" r="6" fill="#5b8def"/>
+  <circle cx="500" cy="213" r="7" fill="#3ddc84"/><circle cx="620" cy="178" r="6" fill="#5b8def"/>
+  <circle cx="740" cy="180" r="6" fill="#5b8def"/><circle cx="800" cy="152" r="6" fill="#5b8def"/>
+  <text x="500" y="200" text-anchor="middle" fill="#3ddc84" font-size="12" font-weight="600">near 16K seq_k: fused faster than FP16 SDPA (isolated op)</text>
+  <text x="180" y="445" text-anchor="middle" fill="#9aa0a6" font-size="11">1K</text>
+  <text x="300" y="445" text-anchor="middle" fill="#9aa0a6" font-size="11">4K</text>
+  <text x="500" y="445" text-anchor="middle" fill="#9aa0a6" font-size="11">16K</text>
+  <text x="620" y="445" text-anchor="middle" fill="#9aa0a6" font-size="11">32K</text>
+  <text x="740" y="445" text-anchor="middle" fill="#9aa0a6" font-size="11">64K</text>
+  <text x="800" y="445" text-anchor="middle" fill="#9aa0a6" font-size="11">128K</text>
+  <text x="460" y="490" text-anchor="middle" fill="#9aa0a6" font-size="12">Short context: fused pays dequant overhead. Long context: wins inside the attention bubble only.</text>
+</svg>

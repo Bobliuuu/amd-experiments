@@ -17,18 +17,11 @@ set -euo pipefail
 # The VF adds sramecc+:xnack- feature flags that must match the embedded binary.
 # Without these flags, hipMemcpyToSymbol returns hipErrorNoBinaryForGpu (209).
 #
-# ROCm VERSION NOTE:
-# This build uses system ROCm 7.2 hipcc (/opt/rocm/bin/hipcc).
-# PyTorch on this system bundles its own libamdhip64.so compiled against ROCm 6.2.
-# Because HIP fat-binary ABI is NOT backward-compatible across major versions,
-# the shared library (libturboquant_mi300x.so) cannot be loaded via ctypes in
-# the same process as PyTorch without error 209.
-#
-# The standalone binaries (tq_validate_mi300x, tq_bench_mi300x) work correctly
-# because they use the system ROCm 7.2 runtime directly.
-#
-# For Python integration, turboquant_mi300x.py uses a pure-PyTorch implementation
-# that is equivalent in quality (rotation via torch.matmul → rocBLAS → MFMA).
+# HIP / code-object note:
+# This build uses system ROCm 7.2 ``hipcc``. A ``.so`` built here may not
+# ``ctypes``-load into the same process as PyTorch if COV5/COV6 or HIP runtime
+# contracts disagree (``hipErrorNoBinaryForGpu`` / 209). Standalone binaries link
+# one coherent stack; Python uses ``turboquant_mi300x.py`` (``torch.matmul`` path).
 ARCH="gfx942:sramecc+:xnack-"
 ROCM="${ROCM_PATH:-/opt/rocm}"
 HIPCC="${ROCM}/bin/hipcc"

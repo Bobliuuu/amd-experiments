@@ -1,8 +1,8 @@
 """
 tq_mfma_loader.py — Direct mfma_f32_16x16x16f16 rotation kernel for TurboQuant
 
-Compiles tq_mfma_rotate.hip.cpp to a COV5 HSACO (compatible with PyTorch's
-bundled ROCm 6.2 runtime) and loads it via ctypes + hipModuleLoad.
+Compiles ``tq_mfma_rotate.hip.cpp`` to a **COV5** HSACO (compatible with
+``hipModuleLoad`` in the **PyTorch process HIP runtime**) and loads it via ctypes.
 
 Two operations:
   forward : Y = X @ R.T   (compress — rotate x_unit into codebook space)
@@ -25,8 +25,8 @@ Compilation
       hipcc --offload-arch=gfx942:sramecc+:xnack- -O3 -mwavefrontsize64
             -DAMD_MFMA_AVAILABLE -mcode-object-version=5 --genco
 
-    COV5 is required for PyTorch ROCm 6.2 compatibility (system hipcc defaults
-    to COV6 under ROCm 7.2, which raises hipError 209 in the 6.2 runtime).
+    **COV5** is often required because system ``hipcc`` defaults to **COV6** on
+    ROCm 7.2 while the PyTorch-linked HIP runtime may reject COV6 objects (**209**).
 """
 
 from __future__ import annotations
@@ -124,8 +124,8 @@ def compile_mfma_hsaco(
     """
     Compile tq_mfma_rotate.hip.cpp → COV5 HSACO.
 
-    Uses system hipcc (ROCm 7.2) with -mcode-object-version=5 to produce
-    a binary loadable by PyTorch's bundled ROCm 6.2 HIP runtime.
+    Uses system ``hipcc`` (ROCm 7.2 toolchain) with ``-mcode-object-version=5`` so
+    the HSACO loads under the PyTorch process HIP runtime.
 
     Parameters
     ----------
@@ -156,7 +156,7 @@ def compile_mfma_hsaco(
         "-DAMD_MFMA_AVAILABLE",
         "-DCDNA3",
         "-std=c++17",                    # for if constexpr
-        "-mcode-object-version=5",       # COV5 = loadable by ROCm 6.2 runtime
+        "-mcode-object-version=5",       # COV5 for hipModuleLoad compatibility
         "--genco",                        # GPU code object only (HSACO), no host binary
         "-o", str(out),
         str(src),

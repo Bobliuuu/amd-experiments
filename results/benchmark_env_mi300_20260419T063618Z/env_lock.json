@@ -1,0 +1,7 @@
+{
+  "locked_utc": "2026-04-19T06:36:18.822130+00:00",
+  "rocm72_uv_workdir": "/root/workspace/amd-experiments/.benchmark_mi300_vllm_frozen",
+  "activate": "source /root/workspace/amd-experiments/.benchmark_mi300_vllm_frozen/.venv/bin/activate",
+  "rocm72_uv_stack": "pip_owned_vllm_721",
+  "note": "Frozen after green qualification + manual decode smoke + bench_flash_attn_check (short seq lens)"
+}

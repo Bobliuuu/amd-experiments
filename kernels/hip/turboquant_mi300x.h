@@ -46,8 +46,8 @@
  * --------
  * The standalone binaries (tq_validate_mi300x, tq_bench_mi300x) link against
  * system ROCm 7.2 and work correctly. The shared library (libturboquant_mi300x.so)
- * cannot be loaded via ctypes in the same Python process as PyTorch (which bundles
- * ROCm 6.2) — hipMemcpyToSymbol returns error 209. Use kernels/turboquant_mi300x.py
+ * may not load via ctypes in the same Python process as PyTorch when HIP / code-object
+ * versions disagree — hipMemcpyToSymbol can return error 209. Use kernels/turboquant_mi300x.py
  * (pure PyTorch via rocBLAS/MFMA) for Python integration.
  */
 

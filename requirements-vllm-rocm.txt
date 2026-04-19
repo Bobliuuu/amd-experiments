@@ -1,0 +1,18 @@
+# Optional: vLLM for end-to-end TurboQuant decode benchmarks.
+#
+# Canonical stack: ROCm 7.2 in Docker (e.g. rocm/primus:v26.2 via docker_run_amd_mi300x.sh),
+# AMDEXP_USE_SYSTEM_PYTHON=1 — use the image’s ROCm-matched PyTorch, then install vLLM per AMD / vLLM docs for that image.
+#
+# For repo-local `.venv` only when the user explicitly wants it: install a ROCm **7.x**-aligned
+# PyTorch + vLLM pair documented for MI300X; do not pull ad-hoc legacy wheel channels that
+# do not match the container’s ROCm 7.2 runtime.
+#
+# Then wire the custom backend:
+#   bash scripts/install_turboquant_vllm_backend.sh
+#   export PYTHONPATH=/path/to/amd-experiments/kernels:$PYTHONPATH
+#
+# If the V1 engine ignores custom backends or crashes, try:
+#   export VLLM_USE_V1=0
+#
+# vLLM may expect kv_cache_dtype as an LLM() kwarg (not env VLLM_KV_CACHE_DTYPE) on
+# some versions — benchmarks/bench_vllm_turboquant_ab.py passes both where supported.

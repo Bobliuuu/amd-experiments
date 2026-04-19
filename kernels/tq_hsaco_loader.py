@@ -1,27 +1,25 @@
 """
-tq_hsaco_loader.py — Load TurboQuant HIP kernels via HSACO (bypassing fat-binary ABI)
+tq_hsaco_loader.py — Load TurboQuant HIP kernels via HSACO (COV5 + process HIP)
 
 The Problem
 -----------
-PyTorch bundles libamdhip64.so built against ROCm 6.2.  The standalone HIP
-shared library (libturboquant_mi300x.so) was compiled with system ROCm 7.2
-hipcc and registers fat-binaries via the 7.2 ABI, which the 6.2 runtime
-cannot process (hipError 209 = hipErrorNoBinaryForGpu).
+A full HIP **shared library** built with the system ``hipcc`` may target **COV6**
+code objects, while the **HIP runtime linked into the running Python process**
+(via PyTorch) may only accept **COV5** modules for ``hipModuleLoad`` — leading to
+**hipError 209** (no binary for GPU) when mixing mismatched build and runtime.
 
 The Fix
 -------
 HSACO (HIP Shared AMD Code Object) files are raw GPU ELF binaries — they
-contain only compiled gfx942 ISA, with NO HIP runtime ABI dependency.
-They can be loaded by ANY HIP runtime that supports the target architecture
-via hipModuleLoad / hipModuleGetFunction / hipModuleLaunchKernel.
+contain compiled gfx942 ISA. With **``-mcode-object-version=5``** (COV5), the HSACO
+matches what many PyTorch ROCm wheels still load through ``hipModuleLoad``.
 
-We load PyTorch's own bundled libamdhip64.so (ROCm 6.2) via ctypes,
-then load the HSACO file with hipModuleLoad.  This gives us direct access
-to the compiled kernels in the same Python process as PyTorch, without
-any fat-binary ABI conflict.
+We load **``libamdhip64.so`` next to the installed ``torch`` package** via ctypes,
+then load the HSACO with ``hipModuleLoad``. That keeps module load inside the
+same HIP runtime as PyTorch.
 
-The HSACO is extracted from the fat binary produced by the ROCm 7.2 build.
-The gfx942 ISA in the HSACO is version-independent.
+Prefer building and running under **ROCm 7.2 Primus** (``docker_run_amd_mi300x.sh``)
+so system ``hipcc`` and image PyTorch stay aligned.
 
 Usage
 -----
@@ -65,7 +63,7 @@ _HIP_DIR     = _THIS_DIR / "hip"
 _HSACO_PATH  = _HIP_DIR / "turboquant_kernels.hsaco"
 _FATBIN_PATH = _HIP_DIR / "turboquant_mi300x.hip.cpp-hip-amdgcn-amd-amdhsa.hipfb"
 
-# PyTorch's bundled libamdhip64.so (ROCm 6.2 — matches the process ABI)
+# libamdhip64.so shipped next to torch (matches the Python process HIP ABI)
 def _find_torch_libamdhip() -> Path:
     torch_lib = Path(torch.__file__).parent / "lib"
     candidates = [
@@ -97,12 +95,11 @@ def recompile_hsaco_cov5(
     """
     Recompile the HIP kernel source to an HSACO with Code Object Version 5.
 
-    ROCm 7.2 hipcc defaults to COV6 (Code Object Version 6), but
-    PyTorch's bundled ROCm 6.2 runtime only understands COV5.
-    Explicitly passing -mcode-object-version=5 produces a loadable HSACO.
+    System ``hipcc`` on ROCm 7.2 defaults to **COV6**, but the HIP runtime in the
+    PyTorch process may require **COV5** objects for ``hipModuleLoad``.
+    Passing **``-mcode-object-version=5``** produces a loadable HSACO.
 
-    This is the fix for hipModuleLoad error 209 when loading 7.2-compiled
-    HSACOs in a 6.2 runtime.
+    This addresses **hipModuleLoad error 209** when a COV6 object is rejected.
     """
     hipcc = Path("/opt/rocm/bin/hipcc")
     if not hipcc.exists():
@@ -119,7 +116,7 @@ def recompile_hsaco_cov5(
         "-DCDNA3",
         "-DAMD_MFMA_AVAILABLE",
         "-DTARGET_MI300X",
-        "-mcode-object-version=5",  # COV5 = ROCm 6.x compatible
+        "-mcode-object-version=5",  # COV5 for hipModuleLoad compatibility
         "--genco",                   # generate GPU code object only (HSACO)
         "-o", str(output_path),
         str(src_path),
@@ -143,15 +140,14 @@ def extract_hsaco(
     src_path: Path = _THIS_DIR / "turboquant_mi300x.hip.cpp",
 ) -> Path:
     """
-    Produce a ROCm 6.x-compatible HSACO for the TurboQuant kernels.
+    Produce a **COV5** HSACO for the TurboQuant kernels.
 
     Strategy (tried in order):
-    1. Recompile with hipcc -mcode-object-version=5 (COV5 = ROCm 6.x compatible).
-       This is the recommended fix for the 7.2→6.2 runtime mismatch.
+    1. Recompile with ``hipcc -mcode-object-version=5`` (COV5).
     2. Extract from fat binary via roc-obj-extract / llvm-objcopy.
 
-    Note: A plain gfx942 HSACO compiled with COV6 (ROCm 7.2 default) will NOT
-    load in ROCm 6.2's hipModuleLoad (error 209).  COV5 resolves this.
+    Note: A gfx942 HSACO compiled with the default **COV6** path may fail
+    ``hipModuleLoad`` (error **209**) in environments that only accept **COV5**.
     """
     if output_path.exists():
         # Check if already compiled with COV5 by attempting to load it.
@@ -208,7 +204,7 @@ def extract_hsaco(
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# HIP ctypes wrappers (ROCm 6.2 ABI from PyTorch's bundled libamdhip64.so)
+# HIP ctypes wrappers (libamdhip64.so next to torch)
 # ──────────────────────────────────────────────────────────────────────────────
 
 hipError_t    = ctypes.c_int
@@ -221,7 +217,7 @@ hipDeviceptr_t = ctypes.c_uint64
 def _load_hip_lib() -> ctypes.CDLL:
     """Load PyTorch's bundled libamdhip64.so with RTLD_LOCAL to avoid conflicts."""
     lib_path = _find_torch_libamdhip()
-    # RTLD_LOCAL: don't pollute the global symbol table with 7.2 vs 6.2 conflicts
+    # RTLD_LOCAL: isolate HIP symbols from other DSOs in the process
     lib = ctypes.CDLL(str(lib_path), mode=ctypes.RTLD_LOCAL)
 
     # hipModuleLoad(module*, filename)
@@ -277,8 +273,8 @@ class TurboQuantHSACO:
     """
     Load and run TurboQuant kernels from the pre-compiled HSACO file.
 
-    Uses PyTorch's bundled libamdhip64.so (ROCm 6.2) for hipModuleLoad,
-    bypassing the fat-binary ABI mismatch that blocks libturboquant_mi300x.so.
+    Uses ``libamdhip64.so`` next to PyTorch for ``hipModuleLoad``,
+    bypassing fat-binary mismatches that can block ``libturboquant_mi300x.so``.
 
     The HSACO contains the raw gfx942 ISA for:
       - tqm_quantize_kernel_tq3
@@ -315,7 +311,7 @@ class TurboQuantHSACO:
                     "Run 'python3 kernels/tq_hsaco_loader.py --extract' to extract."
                 ) from e
 
-        # Load PyTorch's bundled HIP runtime (ROCm 6.2)
+        # Load HIP runtime from the torch install prefix
         self._hip = _load_hip_lib()
 
         # Load the HSACO module
@@ -481,7 +477,7 @@ def check_hsaco_loadable() -> dict:
         mod = hipModule_t(None)
         err = hip.hipModuleLoad(ctypes.byref(mod), str(_HSACO_PATH).encode())
         if err == 209:
-            # COV6 (ROCm 7.2) HSACO not loadable in ROCm 6.2 → try recompile with COV5
+            # COV6 HSACO not loadable → try COV5 recompile
             result["note"] = "Existing HSACO is COV6; attempting COV5 recompile..."
             cov5_path = _THIS_DIR / "turboquant_kernels_cov5.hsaco"
             src = _THIS_DIR / "turboquant_mi300x.hip.cpp"

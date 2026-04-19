@@ -4,7 +4,7 @@ generate_figures_v2.py — Figure Generator for Multi-Method KV Compression Repo
 Generates all plots for the next-generation KV cache compression report
 comparing TurboQuant, IsoQuant, PlanarQuant, and RotorQuant on AMD MI300X.
 
-New figures (beyond the original 10):
+Figures (beyond the original v1 set); story + closure panels at the end:
   Fig 11: PPL vs compression ratio Pareto scatter (THE key plot)
   Fig 12: Decode tok/s vs seq_len — all methods at batch=1
   Fig 13: Decode tok/s vs batch_size at seq_len=32K — bandwidth crossover
@@ -20,6 +20,11 @@ New figures (beyond the original 10):
   Fig 24: Pope (2026) RotorQuant headline claims — CUDA/Metal speedups, params, fidelity (reference JSON)
   Fig 25: MI300X measured vs author CUDA claims — RotorQuant/Turbo deltas
   Fig 26: Empirical KV validation — calculated vs measured ratio + speed/fidelity vs Turbo
+  Fig 27: Story — E2E vLLM output tok/s (FP16 vs TQ paths, flat) — PNG (+ SVG hand-authored optional)
+  Fig 28: Story — Isolated attention FP16 / fused TQ3 latency ratio vs seq_k — PNG
+  Fig 29: Story — Composite: E2E flat vs isolated crossover (two charts; prose in report/UI) — PNG
+  Fig 30: Whole-decode rocprof — top-kernel bucket % (FP16 vs TQ paths, kv-heavy) — PNG
+  Fig 31: Engineering closure — repo-completed levers vs deployment-only remainder — table PNG
 
 Color scheme (consistent across all figures):
   FP16    = #888888 (gray)
@@ -1316,6 +1321,334 @@ def fig26_empirical_kv_validation(results_dir: Path, output_dir: Path):
     print(f"  Saved: {out}")
 
 
+def _default_vllm_kv_heavy():
+    """Fallback when results file missing (matches measured MI300X sweep)."""
+    return {
+        "model": "mistralai/Mistral-7B-v0.1",
+        "input_len": 1024,
+        "output_len": 256,
+        "num_prompts": 32,
+        "device": "AMD Instinct MI300X VF",
+        "results": [
+            {"backend": "fp16", "throughput_output_tps": 2425.3},
+            {"backend": "turboquant_decompress", "throughput_output_tps": 2434.7},
+            {"backend": "turboquant_fused", "throughput_output_tps": 2428.8},
+        ],
+    }
+
+
+def _default_triton_attention():
+    """Fallback when bench_triton_attention.json missing."""
+    return {
+        "device": "AMD Instinct MI300X VF",
+        "results": [
+            {"seq_k": 1024, "fp16_ms": 0.0448, "triton_ms": 0.163},
+            {"seq_k": 4096, "fp16_ms": 0.1853, "triton_ms": 0.4106},
+            {"seq_k": 16384, "fp16_ms": 0.7213, "triton_ms": 0.4428},
+            {"seq_k": 32768, "fp16_ms": 1.5838, "triton_ms": 0.8312},
+            {"seq_k": 65536, "fp16_ms": 3.1606, "triton_ms": 1.6736},
+            {"seq_k": 131072, "fp16_ms": 6.3121, "triton_ms": 2.9894},
+        ],
+    }
+
+
+def fig27_story_e2e_vllm_flat_png(vllm_obj: dict, output_dir: Path) -> None:
+    """E2E vLLM: output tok/s — three backends on one chart (narrow y-range)."""
+    rows = vllm_obj.get("results", [])
+    labels = []
+    vals = []
+    colors = []
+    cmap = {"fp16": "#5b8def", "turboquant_decompress": "#3ddc84", "turboquant_fused": "#ed8b4f"}
+    for r in rows:
+        b = r.get("backend", "")
+        tps = float(r.get("throughput_output_tps", 0))
+        if not b or tps <= 0:
+            continue
+        labels.append(b.replace("turboquant_", "TQ ").replace("_", " ").upper() if b != "fp16" else "FP16")
+        vals.append(tps)
+        colors.append(cmap.get(b, "#888888"))
+    if not vals:
+        print("  Skipped fig27: no vLLM throughput rows")
+        return
+    lo, hi = min(vals) * 0.998, max(vals) * 1.002
+    fig, ax = plt.subplots(figsize=(8, 5))
+    x = np.arange(len(labels))
+    ax.bar(x, vals, color=colors, edgecolor="#222", linewidth=0.6)
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, rotation=12, ha="right")
+    ax.set_ylabel("Output throughput (tok/s)")
+    ax.set_title("End-to-end vLLM (kv-heavy sweep): backends overlap within noise")
+    ax.set_ylim(lo, hi)
+    for i, v in enumerate(vals):
+        ax.text(i, v + (hi - lo) * 0.02, f"{v:.1f}", ha="center", fontsize=10, fontweight="bold")
+    sub = (
+        f"{vllm_obj.get('model', '')} · in={vllm_obj.get('input_len')} · out={vllm_obj.get('output_len')}"
+        f" · prompts={vllm_obj.get('num_prompts')} · {vllm_obj.get('device', '')}"
+    )
+    ax.text(0.5, -0.18, sub, transform=ax.transAxes, ha="center", fontsize=8, color="#444")
+    fig.text(0.5, 0.01, "Source: results/bench_vllm_turboquant_ab_sweep_kv_heavy.json", ha="center", fontsize=8, color="#555")
+    plt.tight_layout(rect=[0, 0.08, 1, 1])
+    out = output_dir / "fig27_story_e2e_vllm_flat_output_tok_s.png"
+    fig.savefig(out, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  Saved: {out}")
+
+
+def fig28_story_isolated_attention_png(triton_obj: dict, output_dir: Path) -> None:
+    """Isolated op: FP16_ms / Triton_ms vs seq_k (ratio crosses 1 near ~16K)."""
+    rows = triton_obj.get("results", [])
+    seq = []
+    ratio = []
+    for r in sorted(rows, key=lambda z: z.get("seq_k", 0)):
+        sk = int(r.get("seq_k", 0))
+        f16 = float(r.get("fp16_ms", 0))
+        tri = float(r.get("triton_ms", 0))
+        if sk <= 0 or tri <= 0:
+            continue
+        seq.append(sk)
+        ratio.append(f16 / tri)
+    if len(seq) < 2:
+        print("  Skipped fig28: insufficient triton attention rows")
+        return
+    fig, ax = plt.subplots(figsize=(8.5, 5))
+    ax.axhline(1.0, color="#ed8b4f", linestyle="--", linewidth=1.5, label="Parity (FP16 / fused = 1)")
+    ax.plot(seq, ratio, "o-", color="#5b8def", linewidth=2.2, markersize=8)
+    ax.set_xscale("log", base=2)
+    ax.set_xticks(seq)
+    ax.get_xaxis().set_major_formatter(plt.FuncFormatter(lambda x, _: f"{int(x):,}"))
+    ax.set_xlabel("seq_k (isolated attention benchmark)")
+    ax.set_ylabel("Latency ratio: FP16 SDPA / fused TQ3 (>1 means fused faster)")
+    ax.set_title("Isolated attention: fused TQ3 wins past ~16K tokens (not full-model tok/s)")
+    ax.legend(loc="lower right", fontsize=9)
+    ax.grid(True, alpha=0.35)
+    fig.text(0.5, 0.01, "Source: results/bench_triton_attention.json", ha="center", fontsize=8, color="#555")
+    plt.tight_layout(rect=[0, 0.06, 1, 1])
+    out = output_dir / "fig28_story_isolated_attention_fp16_vs_fused_tq3.png"
+    fig.savefig(out, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  Saved: {out}")
+
+
+def fig29_story_e2e_vs_isolated_comparison_png(vllm_obj: dict, triton_obj: dict, output_dir: Path) -> None:
+    """
+    Composite figure: (left) E2E flat tok/s, (right) isolated ratio vs seq_k.
+    Explanatory prose lives in the report / UI — not inside the PNG.
+    """
+    rows_v = vllm_obj.get("results", [])
+    labels, vals, colors = [], [], []
+    cmap = {"fp16": "#5b8def", "turboquant_decompress": "#3ddc84", "turboquant_fused": "#ed8b4f"}
+    for r in rows_v:
+        b = r.get("backend", "")
+        tps = float(r.get("throughput_output_tps", 0))
+        if not b or tps <= 0:
+            continue
+        labels.append("FP16" if b == "fp16" else ("TQ decompress" if "decompress" in b else "TQ fused"))
+        vals.append(tps)
+        colors.append(cmap.get(b, "#888"))
+
+    rows_t = sorted(triton_obj.get("results", []), key=lambda z: z.get("seq_k", 0))
+    seq, ratio = [], []
+    for r in rows_t:
+        sk = int(r.get("seq_k", 0))
+        f16 = float(r.get("fp16_ms", 0))
+        tri = float(r.get("triton_ms", 0))
+        if sk > 0 and tri > 0:
+            seq.append(sk)
+            ratio.append(f16 / tri)
+
+    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(12, 5.2))
+
+    if labels and vals:
+        lo, hi = min(vals) * 0.997, max(vals) * 1.003
+        x = np.arange(len(labels))
+        ax0.bar(x, vals, color=colors, edgecolor="#222", linewidth=0.5)
+        ax0.set_xticks(x)
+        ax0.set_xticklabels(labels, rotation=15, ha="right", fontsize=9)
+        ax0.set_ylabel("tok/s")
+        ax0.set_title("Experiment A — Full vLLM stack (kv-heavy)")
+        ax0.set_ylim(lo, hi)
+        for i, v in enumerate(vals):
+            ax0.text(i, v + (hi - lo) * 0.04, f"{v:.0f}", ha="center", fontsize=9, fontweight="bold")
+    else:
+        ax0.text(0.5, 0.5, "No vLLM data", ha="center", va="center", transform=ax0.transAxes)
+
+    if len(seq) >= 2:
+        ax1.axhline(1.0, color="#ed8b4f", linestyle="--", linewidth=1.2, label="Parity")
+        ax1.plot(seq, ratio, "o-", color="#5b8def", linewidth=2, markersize=7)
+        ax1.set_xscale("log", base=2)
+        ax1.set_xticks(seq)
+        ax1.get_xaxis().set_major_formatter(plt.FuncFormatter(lambda x, _: f"{int(x):,}"))
+        ax1.set_xlabel("seq_k (isolated op)")
+        ax1.set_ylabel("FP16 ms / fused TQ3 ms")
+        ax1.set_title("Experiment B — Attention only (no MLP / weights)")
+        ax1.legend(loc="lower right", fontsize=8)
+        ax1.grid(True, alpha=0.35)
+    else:
+        ax1.text(0.5, 0.5, "No triton attention data", ha="center", va="center", transform=ax1.transAxes)
+
+    fig.suptitle(
+        "Two experiments: end-to-end decode vs isolated attention (MI300X)",
+        fontsize=13,
+        fontweight="bold",
+        y=1.02,
+    )
+    fig.text(
+        0.5,
+        0.01,
+        "Sources: results/bench_vllm_turboquant_ab_sweep_kv_heavy.json + results/bench_triton_attention.json",
+        ha="center",
+        fontsize=8,
+        color="#555",
+    )
+    plt.tight_layout(rect=[0, 0.06, 1, 0.95])
+    out = output_dir / "fig29_story_e2e_vs_isolated_attention_comparison.png"
+    fig.savefig(out, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  Saved: {out}")
+
+
+def fig30_decode_rocprof_buckets_png(results_dir: Path, output_dir: Path) -> None:
+    """Stacked % of top-kernel time from decode_whole_step_rocprof_bucket_compare.json."""
+    path = results_dir / "decode_whole_step_rocprof_bucket_compare.json"
+    if not path.exists():
+        print("  Skipped fig30: missing decode_whole_step_rocprof_bucket_compare.json")
+        return
+    with open(path) as f:
+        doc = json.load(f)
+    modes_in = doc.get("modes") or []
+    rows = []
+    for m in modes_in:
+        if m.get("error") or "bucket_share_pct_topk" not in m:
+            continue
+        label = str(m["mode"]).replace("_", " ")
+        rows.append((label, m["bucket_share_pct_topk"]))
+    if not rows:
+        print("  Skipped fig30: no valid modes in JSON")
+        return
+
+    bucket_order = [
+        ("gemm_hipblaslt", "hipBLASLt GEMM"),
+        ("attention_named", "Attention / paged"),
+        ("activation_elementwise", "Elemwise / other small"),
+        ("other", "Other top-kernel"),
+    ]
+    labels = [r[0] for r in rows]
+    n = len(labels)
+    bottom = np.zeros(n)
+    fig, ax = plt.subplots(figsize=(9.5, 5.2))
+    colors = ["#2244DD", "#FF6B4A", "#88AA44", "#BBBBBB"]
+    for (key, nice), c in zip(bucket_order, colors):
+        vals = np.array([float(r[1].get(key, 0)) for r in rows], dtype=float)
+        ax.bar(labels, vals, bottom=bottom, label=nice, color=c, width=0.65, edgecolor="white", linewidth=0.5)
+        bottom += vals
+    ax.set_ylabel("Share of summed top-kernel time (%)")
+    ax.set_title(
+        "Fig 30 — Where decode time goes (rocprof buckets, kv-heavy Mistral)",
+        fontsize=13,
+        fontweight="bold",
+    )
+    ax.set_ylim(0, 100.5)
+    ax.legend(loc="upper right", fontsize=9)
+    ax.tick_params(axis="x", rotation=15)
+    fig.text(
+        0.5,
+        0.01,
+        "Source: results/decode_whole_step_rocprof_bucket_compare.json — see docs/decode_whole_step_amdahl_outcome.md",
+        ha="center",
+        fontsize=8,
+        color="#555",
+    )
+    plt.tight_layout(rect=[0, 0.05, 1, 1])
+    out = output_dir / "fig30_decode_whole_step_rocprof_buckets.png"
+    fig.savefig(out, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  Saved: {out}")
+
+
+def fig31_engineering_closure_table_png(output_dir: Path) -> None:
+    """Static summary: work completed in-repo vs remainder outside repo control."""
+    fig, ax = plt.subplots(figsize=(11.5, 4.2))
+    ax.axis("off")
+    ax.set_title(
+        "Fig 31 — Decode bottleneck: completed in this repository vs deployment stack",
+        fontsize=13,
+        fontweight="bold",
+        pad=12,
+    )
+    cell_text = [
+        [
+            "ROCm custom paged-attention wrongly disabled when sliding_window = max_seq_len−1",
+            "Idempotent patch: scripts/patch_vllm_rocm_sliding_window_custom_paged.py (+ install script hook)",
+        ],
+        [
+            "TurboQuant vLLM V1 bridge / install hygiene",
+            "tq_backends/, install script, CacheDType tq3 patch, reduced CPU sync on uniform decode/prefill batches",
+        ],
+        [
+            "Evidence + ops guidance (Amdahl, rocprof, FFN spike, AWQ datapoint)",
+            "docs/decode_whole_step_amdahl_outcome.md, docs/bottleneck_improvement_mi300.md, results/*.json",
+        ],
+        [
+            "Remaining batch=1 decode throughput",
+            "hipBLASLt GEMM selection, vLLM graphs/compile stability, driver+ROCm cadence — validate on deployed MI300X build",
+        ],
+    ]
+    col_labels = ["Issue / lever (engineering)", "What this repository delivered"]
+    table = ax.table(
+        cellText=cell_text,
+        colLabels=col_labels,
+        loc="center",
+        cellLoc="left",
+        colColours=["#E8EEF8", "#E8F8EE"],
+    )
+    table.auto_set_font_size(False)
+    table.set_fontsize(9)
+    table.scale(1.05, 2.4)
+    for (r, c), cell in table.get_celld().items():
+        if r == 0:
+            cell.set_text_props(fontweight="bold")
+        cell.set_edgecolor("#CCCCCC")
+    fig.text(
+        0.5,
+        0.02,
+        "Narrative: this repo exhausted implementation-side levers without trading accuracy or KV compression; further gains are stack/vendor/deployment work.",
+        ha="center",
+        fontsize=8,
+        color="#444",
+        style="italic",
+    )
+    plt.tight_layout(rect=[0, 0.06, 1, 0.96])
+    out = output_dir / "fig31_repo_engineering_closure_vs_deployment.png"
+    fig.savefig(out, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  Saved: {out}")
+
+
+def generate_story_figures_27_29(results_dir: Path, output_dir: Path) -> None:
+    """PNG exports for deployment story slides (fig27–fig29)."""
+    vpath = results_dir / "bench_vllm_turboquant_ab_sweep_kv_heavy.json"
+    if vpath.exists():
+        with open(vpath) as f:
+            vllm_obj = json.load(f)
+    else:
+        print("  Using embedded defaults for fig27/29 vLLM panel (missing bench_vllm_turboquant_ab_sweep_kv_heavy.json)")
+        vllm_obj = _default_vllm_kv_heavy()
+
+    tpath = results_dir / "bench_triton_attention.json"
+    if tpath.exists():
+        with open(tpath) as f:
+            triton_obj = json.load(f)
+    else:
+        print("  Using embedded defaults for fig28/29 triton panel (missing bench_triton_attention.json)")
+        triton_obj = _default_triton_attention()
+
+    fig27_story_e2e_vllm_flat_png(vllm_obj, output_dir)
+    fig28_story_isolated_attention_png(triton_obj, output_dir)
+    fig29_story_e2e_vs_isolated_comparison_png(vllm_obj, triton_obj, output_dir)
+    fig30_decode_rocprof_buckets_png(results_dir, output_dir)
+    fig31_engineering_closure_table_png(output_dir)
+
+
 def generate_deployment_summary_table() -> str:
     """Generate the deployment summary table for the report."""
     return """
@@ -1439,6 +1772,7 @@ def main():
     fig24_pope_rotorquant_2026_claims(results_dir, output_dir)
     fig25_mi300x_vs_author_claims(results_dir, output_dir)
     fig26_empirical_kv_validation(results_dir, output_dir)
+    generate_story_figures_27_29(results_dir, output_dir)
 
     print(f"\nAll figures saved to {output_dir}")
     print(f"\n{generate_deployment_summary_table()}")

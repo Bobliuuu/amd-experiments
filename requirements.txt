@@ -1,11 +1,10 @@
 # TurboQuant MI300X Benchmarking — Python Dependencies
 #
-# Install order matters. ROCm PyTorch must be installed first.
+# Recommended: AMD ROCm 7.2 MI300X container (prebuilt PyTorch + Triton), then:
+#   bash docker_run_amd_mi300x.sh --setup-only
+#   bash docker_run_amd_mi300x.sh --focused
 #
-# Step 1: PyTorch ROCm 6.2 (compatible with ROCm 7.2 on gfx942)
-#   pip install torch torchvision --index-url https://download.pytorch.org/whl/rocm6.2
-#
-# Step 2: Other dependencies
+# In-container or after torch is installed:
 #   pip install -r requirements.txt
 
 # Core ML / inference
@@ -27,6 +26,8 @@ seaborn>=0.13.0
 
 # Triton (ROCm-compatible, usually pre-installed in ROCm images)
 # triton  # installed separately — ROCm version needed
+
+# Optional: vLLM + TurboQuant end-to-end (ROCm) — see requirements-vllm-rocm.txt + docs/vllm_turboquant_wiring.md
 
 # Optional: for model downloads
 huggingface-hub>=0.22.0

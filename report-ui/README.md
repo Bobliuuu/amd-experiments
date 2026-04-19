@@ -39,6 +39,9 @@ When reports/figures are regenerated, copy them into `public/content` before run
 
 ```bash
 cd /root/workspace/amd-experiments
+# Regenerate v2 PNGs (includes story fig27–fig31 from results/*.json; fig30–31 = rocprof buckets + repo-vs-deployment closure)
+python3 report/generate_figures_v2.py --results-dir results --output-dir report/figures_v2
+
 cp report/final_report.md report-ui/public/content/
 cp report/final_report_v2.md report-ui/public/content/
 rm -rf report-ui/public/content/figures report-ui/public/content/figures_v2

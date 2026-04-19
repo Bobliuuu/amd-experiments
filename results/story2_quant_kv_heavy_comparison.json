@@ -1,0 +1,11 @@
+{
+  "reference_file": "/root/workspace/amd-experiments/results/bench_vllm_turboquant_ab_sweep_kv_heavy.json",
+  "quant_run_file": null,
+  "reference_throughput_output_tps": {
+    "fp16": 2425.3,
+    "turboquant_decompress": 2434.7,
+    "turboquant_fused": 2428.8
+  },
+  "quant_run_throughput_output_tps": {},
+  "notes": "Compare quant_turboquant_fused vs fp16 in quant run; compare reference fp16 vs turboquant_fused for KV-only story. Quant weights should lower GEMM cost if AWQ kernels dominate."
+}

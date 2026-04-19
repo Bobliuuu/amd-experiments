@@ -1,0 +1,21 @@
+{
+  "story2_phase": "env_gate",
+  "time_iso": "2026-04-19T04:35:42Z",
+  "interpreter": "/root/workspace/amd-experiments/.venv/bin/python3",
+  "install_turboquant_backend_script": "/root/workspace/amd-experiments/scripts/install_turboquant_vllm_backend.sh",
+  "install_hint": "After vLLM upgrades: bash scripts/install_turboquant_vllm_backend.sh",
+  "vllm_probe": {
+    "vllm_file": "/root/workspace/amd-experiments/.venv/lib/python3.12/site-packages/vllm/__init__.py",
+    "kind": "pypi_or_system"
+  },
+  "vllm_smoke": {
+    "exit_code": 1,
+    "elapsed_s": 3.85,
+    "dispatch_line_count": 0,
+    "dispatch_lines_sample": [],
+    "fused_dispatch_hints": 0,
+    "tail_stderr": "Traceback (most recent call last):\n  File \"/root/workspace/amd-experiments/benchmarks/bench_vllm_turboquant_ab.py\", line 302, in <module>\n    main()\n  File \"/root/workspace/amd-experiments/benchmarks/bench_vllm_turboquant_ab.py\", line 262, in main\n    run_turboquant_vllm_cell(\n  File \"/root/workspace/amd-experiments/benchmarks/bench_vllm_turboquant_ab.py\", line 89, in run_turboquant_vllm_cell\n    from vllm import LLM, SamplingParams\n  File \"/root/workspace/amd-experiments/.venv/lib/python3.12/site-packages/vllm/__init__.py\", line 70, in __getattr__\n    module = import_module(module_name, __package__)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.12/importlib/__init__.py\", line 90, in import_module\n    return _bootstrap._gcd_import(name[level:], package, level)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/root/workspace/amd-experiments/.venv/lib/python3.12/site-packages/vllm/entrypoints/llm.py\", line 21, in <module>\n    from vllm.config import (\n  File \"/root/workspace/amd-experiments/.venv/lib/python3.12/site-packages/vllm/config/__init__.py\", line 6, in <module>\n    from vllm.config.compilation import (\n  File \"/root/workspace/amd-experiments/.venv/lib/python3.12/site-packages/vllm/config/compilation.py\", line 14, in <module>\n    from vllm.compilation.passes.inductor_pass import CallableInductorPass, InductorPass\n  File \"/root/workspace/amd-experiments/.venv/lib/python3.12/site-packages/vllm/compilation/passes/inductor_pass.py\", line 22, in <module>\n    from torch._inductor.custom_graph_pass import CustomGraphPass\nModuleNotFoundError: No module named 'torch._inductor.custom_graph_pass'\n",
+    "hint": "torch and vLLM versions are mismatched (torch._inductor.custom_graph_pass). Align ROCm torch + vLLM wheels, then re-run without --skip-vllm-smoke."
+  },
+  "gate_passed": false
+}

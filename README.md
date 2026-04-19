@@ -3,7 +3,7 @@
 Four-way benchmark of **TurboQuant**, **IsoQuant**, **PlanarQuant**, and **RotorQuant** on AMD Instinct MI300X (gfx942). Triton/ROCm kernels, Mistral-7B-v0.1, compress/decompress bandwidth, prefill overhead, batch decode, and KV reconstruction quality.
 
 **Hardware**: MI300X VF · gfx942:sramecc+:xnack- · 192 GB HBM3  
-**Stack**: PyTorch 2.5.1+rocm6.2 · Triton 3.1.0 · Transformers 5.5.3
+**Stack (benchmarks / vLLM):** locked **`uv`** venv at **`<repo>/.benchmark_mi300_vllm_frozen/`** — ROCm **7.2.0**, PyTorch **ROCm** line + **vLLM** `rocm721` pip stack (`stack_id` **`vllm_pip_rocm721_owned_torch`**). Exact commands, ACK env vars, archive snapshot, and reproducibility limits: **[`docs/benchmark_mi300_locked_env.md`](docs/benchmark_mi300_locked_env.md)**. Installer + gates: **[`docs/rocm72_uv_torch_vllm_venv.md`](docs/rocm72_uv_torch_vllm_venv.md)**. Primus Docker wrapper: **`docker_run_amd_mi300x.sh`**.
 
 ## Key Results
 
@@ -43,21 +43,24 @@ amd-experiments/
 ├── baselines/                 FP16 / FP8 / INT4 end-to-end decode baselines
 ├── results/                   JSON outputs from all benchmark runs
 ├── report/
-│   ├── final_report_v2.md     Full four-method analysis (current)
-│   ├── final_report.md        Earlier TQ3-only study
-│   ├── figures_v2/            25 benchmark figures
+│   ├── final_report_v2.md     Full four-method analysis (current) + §14 repo closure / Figs 30–31
+│   ├── final_report.md        Earlier TQ3-only study + §14.5 closure summary
+│   ├── figures_v2/            v2 figures (incl. Figs 30–31 — rocprof buckets + deployment handoff)
 │   └── generate_figures_v2.py Matplotlib figure generator
 ├── report-ui/                 React/Vite interactive report viewer
 ├── analysis/                  Plot scripts for v1 results
 ├── scripts/                   Consolidation and merge utilities
 ├── profiling/                 rocprof counter collection
-├── vllm/                      vLLM attention backend stubs (IsoQuant / ROCm flash)
+├── tq_backends/               Drop-in TurboQuant / IsoQuant attention modules (not PyPI vLLM)
 └── notebooks/                 Jupyter analysis notebook
 ```
 
 ## Quick Start
 
+Use the **locked benchmark interpreter** when running GPU work (see **`docs/benchmark_mi300_locked_env.md`**):
+
 ```bash
+# Example: after `source <repo>/.benchmark_mi300_vllm_frozen/.venv/bin/activate`
 # Compress/decompress microbench (§4 of the report — ~30 seconds)
 python3 benchmarks/bench_compress_decompress.py --n-vectors 4096 --n-iters 50
 
@@ -73,6 +76,8 @@ python3 benchmarks/bench_batch_decode_v2.py --model mistralai/Mistral-7B-v0.1
 # Regenerate all v2 figures from existing results/
 python3 report/generate_figures_v2.py
 ```
+
+**vLLM kv-heavy decode — repository closure (what we shipped vs what is deployment-only):** [`docs/repo_decode_bottleneck_closure.md`](docs/repo_decode_bottleneck_closure.md) · ops checklist [`docs/bottleneck_improvement_mi300.md`](docs/bottleneck_improvement_mi300.md) · evidence trail [`docs/decode_whole_step_amdahl_outcome.md`](docs/decode_whole_step_amdahl_outcome.md).
 
 ## Building HIP Kernels
 
@@ -125,18 +130,15 @@ bash run_all_benchmarks.sh mistralai/Mistral-7B-v0.1  # ~60–90 min
 | `validate_triton_e2e.py` | Correctness + throughput: Triton TQ3 vs FP16 SDPA |
 | `profile_rocprof.py` | ROCm hardware counter collection |
 
-## ROCm ABI Note
+## ROCm / HIP ABI note
 
-System ROCm is **7.2** but PyTorch bundles **ROCm 6.2**. The compiled
-`.so` (`kernels/hip/libturboquant_mi300x.so`) **cannot be loaded via ctypes** in the
-same process as PyTorch — `hipMemcpyToSymbol` returns error 209.
+The **HIP runtime linked into the Python process** (via PyTorch) and a **system `hipcc`** build of standalone HIP may disagree on **code-object version** (COV5 vs COV6). Loading a mismatched `libturboquant_mi300x.so` via **ctypes** in the same process as PyTorch can fail with **HIP error 209** (`hipMemcpyToSymbol`, module load).
 
 **For Python use**: `kernels/turboquant_mi300x.py` provides an equivalent
-pure-PyTorch implementation. The rotation GEMM routes through
-`torch.matmul → rocBLAS → MFMA`, so the hardware is still fully utilized.
+pure-PyTorch path; the rotation GEMM routes through
+`torch.matmul → rocBLAS → MFMA`.
 
-**For isolated C benchmarks**: the standalone binaries in `kernels/hip/` link
-against system ROCm 7.2 directly and work without any ABI conflict.
+**For isolated C benchmarks**: build and run **`kernels/hip/`** binaries inside the **ROCm 7.2 Primus** workflow (`docker_run_amd_mi300x.sh`) so toolchain and runtime match.
 
 ## Attention Implementation Note
 
@@ -165,13 +167,15 @@ Primary outputs:
 ## Reading Order
 
 1. This `README.md` — layout and quick start
-2. `report/final_report_v2.md` — full four-method narrative with tables and figures
-3. `current.md` — detailed phase-by-phase status, blockers, findings
-4. `research.md` — TurboQuant algorithm deep-dive + MI300X porting notes
-5. `kernels/hip/turboquant_mi300x.h` — HIP kernel architecture and block format
+2. **`docs/benchmark_mi300_locked_env.md`** — canonical MI300X + vLLM benchmark Python path and lock procedure
+3. `report/final_report_v2.md` — full four-method narrative with tables and figures
+4. `current.md` — detailed phase-by-phase status, blockers, findings
+5. `research.md` — TurboQuant algorithm deep-dive + MI300X porting notes
+6. `kernels/hip/turboquant_mi300x.h` — HIP kernel architecture and block format
 
 ## Component READMEs
 
+- **`docs/benchmark_mi300_locked_env.md`** — canonical locked vLLM + torch benchmark environment
 - `benchmarks/README.md` — runnable benchmark entry points and quick commands
 - `baselines/README.md` — FP16/FP8/INT4 baseline commands
 - `scripts/README.md` — consolidation/showcase utility commands

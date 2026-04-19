@@ -1,0 +1,11 @@
+{
+  "decode_whole_step_phase": "lever_ffn_hypothesis",
+  "microbench": "kernels/ffn_fused_swiglu_spike.py",
+  "shape_m_h": [64, 14336],
+  "ms_per_iter_torch_separate": 0.0111,
+  "ms_per_iter_triton_fused": 0.0196,
+  "speedup_triton_vs_torch": 0.566,
+  "verdict": "no_go",
+  "rationale": "At this decode-shaped (M,H), Triton elementwise fused SwiGLU is slower than eager torch SiLU*mul (speedup 0.57×). Per results/story2_ffn_integration_hypothesis.json no_go branch, do not prioritize vLLM SwiGLU fusion until a different fusion pattern or shape wins microbench.",
+  "reference_criteria": "results/story2_ffn_integration_hypothesis.json"
+}

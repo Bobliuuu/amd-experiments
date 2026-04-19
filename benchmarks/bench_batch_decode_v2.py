@@ -17,12 +17,20 @@ For Mistral-7B at seq=32K:
   K = 2 × 32 × 8 × 32768 × 128 × 2B = 4.29 GB/seq
   batch* ≈ 14/4.29 ≈ 3.3 → meaningful gain starts at batch ≥ 4
 
+FP16 attention variants (for ROCm CK / SDPA dispatch comparison):
+
+- ``fp16`` — ``torch.bmm`` matmul path (legacy microbench; often memory-suboptimal).
+- ``fp16_sdpa`` — decode-shaped **non-causal** ``scaled_dot_product_attention`` (one
+  query token vs full KV); on ROCm this often stays on the **math** dispatcher.
+- ``fp16_sdpa_causal`` — full-sequence **causal** SDPA (prefill-shaped, ``is_causal=True``),
+  useful as an upper bound when the stack routes to **CK FlashAttention**.
+
 Usage:
     python3 benchmarks/bench_batch_decode_v2.py
     python3 benchmarks/bench_batch_decode_v2.py \\
         --batch-sizes 1 4 8 16 32 64 \\
         --seq-lens 8192 32768 \\
-        --methods fp16 planar3 iso3 rotor3 turbo3
+        --methods fp16 fp16_sdpa fp16_sdpa_causal planar3 iso3 rotor3 turbo3
 """
 
 import argparse
@@ -38,6 +46,23 @@ KERNELS_DIR = Path(__file__).parent.parent / "kernels"
 RESULTS_DIR = Path(__file__).parent.parent / "results"
 sys.path.insert(0, str(KERNELS_DIR))
 RESULTS_DIR.mkdir(exist_ok=True)
+
+
+def parse_method_spec(method_spec: str) -> tuple[str, int]:
+    """Return (method_key, bits) for e.g. ``planar3`` → (``planar``, 3)."""
+    if method_spec == "fp16":
+        return "fp16", 0
+    if method_spec == "fp16_sdpa":
+        return "fp16_sdpa", 0
+    if method_spec == "fp16_sdpa_causal":
+        return "fp16_sdpa_causal", 0
+    if len(method_spec) < 2 or not method_spec[-1].isdigit():
+        raise ValueError(
+            f"Unknown method {method_spec!r}; expected fp16, fp16_sdpa, fp16_sdpa_causal, "
+            "or a name ending in bit width (e.g. planar3)."
+        )
+    return method_spec[:-1], int(method_spec[-1])
+
 
 # Model parameters (Mistral-7B defaults)
 MODEL_PARAMS = {
@@ -105,6 +130,28 @@ def simulate_batch_decode_step(
             weights = torch.softmax(scores, dim=-1)
             _ = torch.bmm(weights, V)
 
+    elif method == "fp16_sdpa":
+        # (B*Hkv, 1, D) and (B*Hkv, S, D) → batched SDPA, non-causal (decode step shape).
+        for l in range(n_layers):
+            K, V = cache_list[l]
+            q_b = q.view(batch_size, n_kv_heads, 1, head_dim).transpose(1, 2)
+            k_b = K.view(batch_size, n_kv_heads, seq_len, head_dim).transpose(1, 2)
+            v_b = V.view(batch_size, n_kv_heads, seq_len, head_dim).transpose(1, 2)
+            _ = torch.nn.functional.scaled_dot_product_attention(
+                q_b, k_b, v_b, is_causal=False, scale=sm_scale
+            )
+
+    elif method == "fp16_sdpa_causal":
+        # Full causal attention over seq_len (prefill-shaped); often hits CK FA on ROCm.
+        for l in range(n_layers):
+            Q, K, V = cache_list[l]
+            q_b = Q.transpose(1, 2)
+            k_b = K.transpose(1, 2)
+            v_b = V.transpose(1, 2)
+            _ = torch.nn.functional.scaled_dot_product_attention(
+                q_b, k_b, v_b, is_causal=True, scale=sm_scale
+            )
+
     elif method == "turbo":
         tq = cache_list[-1]["tq"]
         for l in range(n_layers):
@@ -145,6 +192,17 @@ def build_cache(method: str, bits: int, batch_size: int, seq_len: int,
             K = torch.randn(batch_size * n_kv_heads, seq_len, head_dim, device=device)
             V = torch.randn(batch_size * n_kv_heads, seq_len, head_dim, device=device)
             cache.append((K, V))
+        return cache
+
+    if method == "fp16_sdpa":
+        return build_cache("fp16", bits, batch_size, seq_len, n_layers, n_kv_heads, head_dim, device)
+
+    if method == "fp16_sdpa_causal":
+        for l in range(n_layers):
+            Q = torch.randn(batch_size, n_kv_heads, seq_len, head_dim, device=device)
+            K = torch.randn(batch_size, n_kv_heads, seq_len, head_dim, device=device)
+            V = torch.randn(batch_size, n_kv_heads, seq_len, head_dim, device=device)
+            cache.append((Q, K, V))
         return cache
 
     if method == "turbo":
@@ -216,14 +274,14 @@ def main():
         fp16_tps = {}
 
         for method_spec in args.methods:
-            if method_spec == "fp16":
-                method, bits = "fp16", 0
-            else:
-                method = method_spec[:-1]
-                bits = int(method_spec[-1])
+            try:
+                method, bits = parse_method_spec(method_spec)
+            except ValueError as e:
+                print(f"  SKIP {method_spec}: {e}")
+                continue
 
             # Get compression ratio
-            if method == "fp16":
+            if method in ("fp16", "fp16_sdpa", "fp16_sdpa_causal"):
                 comp_ratio = 1.0
             elif method == "turbo":
                 from turboquant_mi300x import COMPRESSION_RATIO

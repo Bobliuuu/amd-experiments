@@ -1,0 +1,28 @@
+{
+  "device": "AMD Instinct MI300X VF",
+  "seq_k": 32768,
+  "B": 1,
+  "H": 32,
+  "D": 128,
+  "S_q": 1,
+  "sweep": [
+    {
+      "BLOCK_KV": 1024,
+      "triton_ms": 0.8462
+    },
+    {
+      "BLOCK_KV": 2048,
+      "triton_ms": 0.8358
+    },
+    {
+      "BLOCK_KV": 4096,
+      "triton_ms": 0.8276
+    },
+    {
+      "BLOCK_KV": 8192,
+      "triton_ms": 1.5017
+    }
+  ],
+  "best_BLOCK_KV": 4096,
+  "best_triton_ms": 0.8276
+}

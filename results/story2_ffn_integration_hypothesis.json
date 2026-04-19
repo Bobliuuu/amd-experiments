@@ -1,0 +1,16 @@
+{
+  "story2_phase": "ffn_integration_hypothesis",
+  "updated": "2026-04-19",
+  "context": "Isolated fused TQ3 attention wins at long seq_k; E2E vLLM tok/s stays flat when hipBLASLt/GEMM dominates rocprof top-kernels (see results/story2_rocprof_bucket_compare.json after running story2_rocprof_summarize.py).",
+  "microbench": "kernels/ffn_fused_swiglu_spike.py — Triton SwiGLU elementwise fusion vs separate SiLU*mul; not wired into vLLM.",
+  "go_criteria": [
+    "rocprof bucket_compare shows activation_elementwise + related non-GEMM share >= 5% top-kernel time on decode path for target model shape, OR",
+    "torch.profiler / Nsight shows SwiGLU-bound segments on MLP hot path for the same build as serving benchmarks"
+  ],
+  "no_go_criteria": [
+    "gemm_hipblaslt + gemm_general account for >= 85% of top-kernel cumulative time across fp16 and turboquant_fused at kv-heavy shapes with no material activation bucket",
+    "ffn_fused_swiglu_spike shows <5% speedup at decode-shaped (M, N) vs eager PyTorch for representative dtypes"
+  ],
+  "integration_locus": "Prefer upstream vLLM custom op / plugin or ROCm-optimized MLP path; full MLP rewrite in amd-experiments is out of scope without fork alignment.",
+  "next_action_if_go": "Prototype fused SwiGLU + quant matmul boundary in a vLLM fork or extension API; re-run bench_vllm_turboquant_ab + bench_vllm_rocprof_timeline --kv-heavy-story2."
+}

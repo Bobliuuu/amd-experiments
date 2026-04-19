@@ -43,7 +43,7 @@
  *   FP16 precision is sufficient — rotation rounding error is negligible vs
  *   the subsequent 3-bit quantization noise.
  *
- * Target: gfx942 (CDNA3), -mcode-object-version=5 for PyTorch ROCm 6.2 compat.
+ * Target: gfx942 (CDNA3), -mcode-object-version=5 for COV5 / hipModuleLoad compatibility.
  */
 
 #include <hip/hip_runtime.h>

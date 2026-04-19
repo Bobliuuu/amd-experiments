@@ -8,57 +8,57 @@
   "results": [
     {
       "seq_k": 1024,
-      "fp16_ms": 0.0507,
-      "pywrap_ms": 0.9006,
-      "triton_ms": 0.3525,
-      "speedup_vs_fp16": 0.144,
-      "speedup_vs_pywrap": 2.555,
-      "triton_eff_bw_gbs": 9.7
+      "fp16_ms": 0.0448,
+      "pywrap_ms": 0.8605,
+      "triton_ms": 0.163,
+      "speedup_vs_fp16": 0.275,
+      "speedup_vs_pywrap": 5.279,
+      "triton_eff_bw_gbs": 20.9
     },
     {
       "seq_k": 4096,
-      "fp16_ms": 0.1872,
-      "pywrap_ms": 2.2428,
-      "triton_ms": 1.1768,
-      "speedup_vs_fp16": 0.159,
-      "speedup_vs_pywrap": 1.906,
-      "triton_eff_bw_gbs": 11.6
+      "fp16_ms": 0.1853,
+      "pywrap_ms": 2.1979,
+      "triton_ms": 0.4106,
+      "speedup_vs_fp16": 0.451,
+      "speedup_vs_pywrap": 5.353,
+      "triton_eff_bw_gbs": 33.2
     },
     {
       "seq_k": 16384,
-      "fp16_ms": 0.7241,
-      "pywrap_ms": 8.8197,
-      "triton_ms": 4.5223,
-      "speedup_vs_fp16": 0.16,
-      "speedup_vs_pywrap": 1.95,
-      "triton_eff_bw_gbs": 12.1
+      "fp16_ms": 0.7213,
+      "pywrap_ms": 8.4289,
+      "triton_ms": 0.4428,
+      "speedup_vs_fp16": 1.629,
+      "speedup_vs_pywrap": 19.033,
+      "triton_eff_bw_gbs": 123.1
     },
     {
       "seq_k": 32768,
-      "fp16_ms": 1.5309,
-      "pywrap_ms": 17.4109,
-      "triton_ms": 8.9906,
-      "speedup_vs_fp16": 0.17,
-      "speedup_vs_pywrap": 1.937,
-      "triton_eff_bw_gbs": 12.1
+      "fp16_ms": 1.5838,
+      "pywrap_ms": 17.8285,
+      "triton_ms": 0.8312,
+      "speedup_vs_fp16": 1.905,
+      "speedup_vs_pywrap": 21.45,
+      "triton_eff_bw_gbs": 131.2
     },
     {
       "seq_k": 65536,
-      "fp16_ms": 3.0512,
-      "pywrap_ms": 34.5584,
-      "triton_ms": 18.4318,
-      "speedup_vs_fp16": 0.166,
-      "speedup_vs_pywrap": 1.875,
-      "triton_eff_bw_gbs": 11.8
+      "fp16_ms": 3.1606,
+      "pywrap_ms": 35.7646,
+      "triton_ms": 1.6736,
+      "speedup_vs_fp16": 1.888,
+      "speedup_vs_pywrap": 21.369,
+      "triton_eff_bw_gbs": 130.3
     },
     {
       "seq_k": 131072,
-      "fp16_ms": 6.1063,
-      "pywrap_ms": 68.8139,
-      "triton_ms": 36.8934,
-      "speedup_vs_fp16": 0.166,
-      "speedup_vs_pywrap": 1.865,
-      "triton_eff_bw_gbs": 11.8
+      "fp16_ms": 6.3121,
+      "pywrap_ms": 71.7739,
+      "triton_ms": 2.9894,
+      "speedup_vs_fp16": 2.112,
+      "speedup_vs_pywrap": 24.01,
+      "triton_eff_bw_gbs": 145.9
     }
   ]
 }
