@@ -41,6 +41,13 @@ sys.path.insert(0, str(KERNELS_DIR))
 sys.path.insert(0, str(BASELINES_DIR))
 RESULTS_DIR.mkdir(exist_ok=True)
 
+from cache_utils import (
+    add_swa_args,
+    print_swa_status,
+    resolve_swa_window,
+    truncate_kv_to_window,
+)
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Dataset
@@ -137,6 +144,7 @@ def evaluate_perplexity(
     kv_wrapper: KVQuantWrapper,
     context_len: int = 1024,
     stride: int = 512,
+    swa_window: int | None = None,
 ) -> Dict:
     """
     Stride-based perplexity evaluation with quantized KV cache.
@@ -165,7 +173,10 @@ def evaluate_perplexity(
 
             # First chunk: no KV cache
             out = model(input_ids, use_cache=True)
-            past_kv = kv_wrapper.quantize_kv(out.past_key_values)
+            past_kv = out.past_key_values
+            if swa_window is not None:
+                truncate_kv_to_window(past_kv, swa_window)
+            past_kv = kv_wrapper.quantize_kv(past_kv)
 
             logits = out.logits  # (1, seq_len, vocab)
             loss   = torch.nn.functional.cross_entropy(
@@ -271,6 +282,7 @@ def main():
     parser.add_argument("--kv-quality-seq-len", type=int, default=256,
                         help="Sequence length for KV reconstruction quality test")
     parser.add_argument("--output", type=str, default=None)
+    add_swa_args(parser)
     args = parser.parse_args()
 
     print(f"=== KV Cache Quality Benchmark ===")
@@ -287,7 +299,11 @@ def main():
     model.eval()
     print(f"Model loaded: {sum(p.numel() for p in model.parameters())/1e9:.1f}B params\n")
 
-    all_results = {"model": args.model, "device": torch.cuda.get_device_name(0)}
+    effective_window = resolve_swa_window(args.swa, model, args.window)
+    print_swa_status(args.swa, effective_window)
+
+    all_results = {"model": args.model, "device": torch.cuda.get_device_name(0),
+                   "swa": args.swa, "swa_window": effective_window}
 
     # #region agent log
     import json as _j, time as _t
@@ -328,7 +344,8 @@ def main():
             wrapper = KVQuantWrapper(model, kv_config, bits=bits)
             r = evaluate_perplexity(
                 model, tokenizer, token_ids, wrapper,
-                context_len=args.context_len
+                context_len=args.context_len,
+                swa_window=effective_window,
             )
             ppl_results[kv_config] = r
             baseline_ppl = ppl_results.get("fp16", {}).get("perplexity", r["perplexity"])

@@ -22,6 +22,9 @@ import sys
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(_REPO_ROOT / "kernels"))
+from cache_utils import add_swa_args, print_swa_status, vllm_swa_warn  # noqa: E402
+
 _DEFAULT_VLLM_PYTHON = _REPO_ROOT / ".benchmark_mi300_vllm_frozen" / ".venv" / "bin" / "python"
 if not _DEFAULT_VLLM_PYTHON.is_file():
     _DEFAULT_VLLM_PYTHON = _REPO_ROOT / ".venv" / "bin" / "python"
@@ -173,6 +176,7 @@ def _run_mode(args, mode: str) -> dict:
         cmd += ["--max-num-batched-tokens", str(args.max_num_batched_tokens)]
     if args.max_num_seqs > 0:
         cmd += ["--max-num-seqs", str(args.max_num_seqs)]
+    cmd += ["--swa", args.swa, "--window", str(args.window)]
     # Run from amd-experiments root; do not cwd to a path that puts a `vllm/` stub before site-packages.
     repo_root = Path(__file__).resolve().parents[1]
     subprocess.run(cmd, check=True, cwd=str(repo_root))
@@ -266,7 +270,10 @@ def main():
             "Often unavailable or limited on VF; see profile_rocprof.py / report/paper.md."
         ),
     )
+    add_swa_args(p)
     args = p.parse_args()
+    print_swa_status(args.swa, args.window if args.swa == "on" else None)
+    vllm_swa_warn(args.swa, args.max_model_len if args.max_model_len > 0 else 4096)
     if args.kv_heavy_story2:
         args.input_len = 1024
         args.output_len = 256
@@ -306,6 +313,8 @@ def main():
         "max_num_seqs": args.max_num_seqs or None,
         "kv_heavy_story2_reference": "results/bench_vllm_turboquant_ab_sweep_kv_heavy.json "
         "(input_len=1024, output_len=256, num_prompts=32)",
+        "swa": args.swa,
+        "swa_window": args.window if args.swa == "on" else None,
     }
     summary_path.write_text(
         json.dumps({"meta": meta, "results": all_results}, indent=2),

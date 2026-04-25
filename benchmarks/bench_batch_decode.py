@@ -70,6 +70,13 @@ RESULTS_DIR = Path(__file__).parent.parent / "results"
 sys.path.insert(0, str(KERNELS_DIR))
 RESULTS_DIR.mkdir(exist_ok=True)
 
+from cache_utils import (
+    add_swa_args,
+    print_swa_status,
+    resolve_swa_window,
+    truncate_kv_to_window,
+)
+
 os.environ.setdefault("PYTORCH_TUNABLEOP_ENABLED", "0")
 os.environ.setdefault("HIP_FORCE_DEV_KERNARG", "1")
 
@@ -192,6 +199,7 @@ def bench_one(
     mode: str,          # "fp16" or "tq3"
     n_warmup: int = 3,
     n_measure: int = 20,
+    swa_window: int | None = None,
 ) -> Dict:
     """
     Benchmark one (seq_len, batch_size, mode) cell.
@@ -221,6 +229,10 @@ def bench_one(
         for layer in cache.layers
     )
 
+    # SWA: truncate prefill cache to window before TQ round-trip
+    if swa_window is not None:
+        truncate_kv_to_window(cache, swa_window)
+
     # Apply TQ3 round-trip to prefill cache
     if mode != "fp16":
         def tq_roundtrip(k, v):
@@ -244,6 +256,8 @@ def bench_one(
         with torch.no_grad():
             out = model(nt, past_key_values=c, use_cache=True)
         c = out.past_key_values
+        if swa_window is not None:
+            truncate_kv_to_window(c, swa_window)
         if mode != "fp16":
             apply_kv_roundtrip(c, tq_roundtrip)
         nt = out.logits[:, -1:, :].argmax(dim=-1)
@@ -262,6 +276,8 @@ def bench_one(
         with torch.no_grad():
             out = model(next_token, past_key_values=cache, use_cache=True)
         cache = out.past_key_values
+        if swa_window is not None:
+            truncate_kv_to_window(cache, swa_window)
         if mode != "fp16":
             apply_kv_roundtrip(cache, tq_roundtrip)
         next_token = out.logits[:, -1:, :].argmax(dim=-1)
@@ -304,6 +320,7 @@ def bench_one(
         "vram_peak_gb":      round(peak_vram, 2),
         "n_measure":         n_measure,
         "n_warmup":          n_warmup,
+        "swa_window":        swa_window,
     }
 
 
@@ -326,6 +343,7 @@ def main():
     parser.add_argument("--n-measure",  type=int, default=20)
     parser.add_argument("--skip-fp16",  action="store_true")
     parser.add_argument("--output",     type=str, default=None)
+    add_swa_args(parser)
     args = parser.parse_args()
 
     print("=" * 74)
@@ -353,6 +371,9 @@ def main():
     n_params = sum(p.numel() for p in model.parameters())
     print(f"Parameters:  {n_params / 1e9:.2f}B ({n_params * 2 / 1e9:.1f} GB FP16)")
 
+    effective_window = resolve_swa_window(args.swa, model, args.window)
+    print_swa_status(args.swa, effective_window)
+
     # Infer model config
     cfg = model.config
     n_layers    = cfg.num_hidden_layers
@@ -371,6 +392,8 @@ def main():
         "n_layers":     n_layers,
         "n_kv_heads":   n_kv_heads,
         "head_dim":     head_dim,
+        "swa":          args.swa,
+        "swa_window":   effective_window,
         "results":      [],
         "theory":       [],
     }
@@ -415,7 +438,8 @@ def main():
             if not args.skip_fp16:
                 try:
                     r = bench_one(model, tokenizer, tq, seq_len, bs, "fp16",
-                                  args.n_warmup, args.n_measure)
+                                  args.n_warmup, args.n_measure,
+                                  swa_window=effective_window)
                     fp16_results[bs] = r
                     all_results["results"].append(r)
                     print(f"  {bs:>6}  {'fp16':>6}  {r['tokens_per_sec']:>9.1f}  "
@@ -434,7 +458,8 @@ def main():
             # TQ3
             try:
                 r = bench_one(model, tokenizer, tq, seq_len, bs, "tq3",
-                              args.n_warmup, args.n_measure)
+                              args.n_warmup, args.n_measure,
+                              swa_window=effective_window)
                 all_results["results"].append(r)
 
                 # Compute measured speedup vs FP16 baseline

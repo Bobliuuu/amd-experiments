@@ -24,6 +24,9 @@ ROOT = Path(__file__).resolve().parents[1]
 RESULTS = ROOT / "results"
 RESULTS.mkdir(parents=True, exist_ok=True)
 sys.path.insert(0, str(ROOT / "benchmarks"))
+sys.path.insert(0, str(ROOT / "kernels"))
+
+from cache_utils import add_swa_args, print_swa_status, vllm_swa_warn  # noqa: E402
 
 
 def _run_cell(model: str, quantization: str | None, prompt: str, max_tokens: int, gpu_mem: float) -> list[int]:
@@ -73,7 +76,11 @@ def main() -> None:
     p.add_argument("--prompt", default="The capital of France is")
     p.add_argument("--max-tokens", type=int, default=32)
     p.add_argument("--gpu-memory-utilization", type=float, default=0.85)
+    add_swa_args(p)
     args = p.parse_args()
+    print_swa_status(args.swa, args.window if args.swa == "on" else None)
+    # max_model_len is hardcoded to 2048 in _run_cell — well within Mistral window
+    vllm_swa_warn(args.swa, 2048)
 
     ref_ids = _run_cell(args.fp16_model, None, args.prompt, args.max_tokens, args.gpu_memory_utilization)
     q_ids = _run_cell(args.quant_model, args.quantization, args.prompt, args.max_tokens, args.gpu_memory_utilization)

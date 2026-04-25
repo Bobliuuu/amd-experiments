@@ -65,6 +65,13 @@ RESULTS_DIR = Path(__file__).parent.parent / "results"
 sys.path.insert(0, str(KERNELS_DIR))
 RESULTS_DIR.mkdir(exist_ok=True)
 
+from cache_utils import (
+    add_swa_args,
+    print_swa_status,
+    resolve_swa_window,
+    truncate_kv_to_window,
+)
+
 os.environ.setdefault("PYTORCH_TUNABLEOP_ENABLED", "0")
 os.environ.setdefault("HIP_FORCE_DEV_KERNARG", "1")
 
@@ -216,6 +223,7 @@ def bench_one_context(
     n_decode: int = 20,
     n_runs: int = 3,
     batch_size: int = 1,
+    swa_window: int | None = None,
 ) -> Dict:
     """
     Benchmark decode throughput at a given context length.
@@ -242,6 +250,10 @@ def bench_one_context(
         for layer in cache.layers
     )
 
+    # SWA: truncate prefill cache to window before TQ round-trip
+    if swa_window is not None:
+        truncate_kv_to_window(cache, swa_window)
+
     def tq_roundtrip(k, v):
         hd = k.shape[-1]
         k_comp = tq.compress_tensor(k.reshape(-1, hd).float())
@@ -267,6 +279,8 @@ def bench_one_context(
             with torch.no_grad():
                 out = model(next_token, past_key_values=cache, use_cache=True)
             cache = out.past_key_values
+            if swa_window is not None:
+                truncate_kv_to_window(cache, swa_window)
             if mode != "fp16":
                 apply_kv_roundtrip(cache, tq_roundtrip)
             next_token = out.logits[:, -1:, :].argmax(dim=-1)
@@ -293,6 +307,7 @@ def bench_one_context(
         "kv_compression":    round(fp16_kv_bytes / tq3_kv_bytes, 3),
         "n_decode":          n_decode,
         "n_runs":            n_runs,
+        "swa_window":        swa_window,
     }
 
 
@@ -317,6 +332,7 @@ def main():
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--skip-fp16",  action="store_true")
     parser.add_argument("--output",     type=str, default=None)
+    add_swa_args(parser)
     args = parser.parse_args()
 
     # ── Capacity analysis (always run) ────────────────────────────────────────
@@ -435,6 +451,9 @@ def main():
     print(f"GQA ratio: {n_q_heads_actual // n_kv_heads_actual}× "
           f"({'GQA' if n_kv_heads_actual < n_q_heads_actual else 'MHA'})")
 
+    effective_window = resolve_swa_window(args.swa, model, args.window)
+    print_swa_status(args.swa, effective_window)
+
     tq = TurboQuantMI300X(bits=3, rotation_seed=42)
 
     all_results = {
@@ -446,6 +465,8 @@ def main():
         "n_kv_heads":    n_kv_heads_actual,
         "head_dim":      head_dim_actual,
         "vram_total_gb": total_vram_gb,
+        "swa":           args.swa,
+        "swa_window":    effective_window,
         "results":       [],
     }
 
@@ -468,6 +489,7 @@ def main():
                 r = bench_one_context(
                     model, tokenizer, tq, seq_len, "fp16",
                     args.n_decode, args.n_runs, args.batch_size,
+                    swa_window=effective_window,
                 )
                 all_results["results"].append(r)
                 print(f"{seq_len:>10,}  {'fp16':>5}  {r['tokens_per_sec']:>9.1f}  "
@@ -486,6 +508,7 @@ def main():
             r = bench_one_context(
                 model, tokenizer, tq, seq_len, "tq3",
                 args.n_decode, args.n_runs, args.batch_size,
+                swa_window=effective_window,
             )
             all_results["results"].append(r)
             print(f"{seq_len:>10,}  {'tq3':>5}  {r['tokens_per_sec']:>9.1f}  "

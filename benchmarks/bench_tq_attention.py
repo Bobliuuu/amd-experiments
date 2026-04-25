@@ -33,6 +33,8 @@ RESULTS_DIR = Path(__file__).parent.parent / "results"
 sys.path.insert(0, str(KERNELS_DIR))
 RESULTS_DIR.mkdir(exist_ok=True)
 
+from cache_utils import add_swa_args, clamp_seq_to_window, print_swa_status
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Synthetic attention configs
@@ -100,6 +102,8 @@ def bench_attention_seq_lens(
     n_iters: int = 20,
     n_warmup: int = 5,
     bits: int = 3,
+    swa: str = "off",
+    window: int = 0,
 ):
     """
     Benchmark attention throughput for FP16 and TQ3 at each context length.
@@ -113,11 +117,13 @@ def bench_attention_seq_lens(
     results = []
 
     for n_kv in seq_lens:
-        row = {"n_kv": n_kv, "head_dim": HEAD_DIM, "n_kv_heads": N_KV_HEADS}
+        cache_n_kv = clamp_seq_to_window(n_kv, swa, window)
+        row = {"n_kv": n_kv, "cache_n_kv": cache_n_kv,
+               "head_dim": HEAD_DIM, "n_kv_heads": N_KV_HEADS}
 
         # Create synthetic KV in FP16
-        k_fp16 = torch.randn(N_KV_HEADS, n_kv, HEAD_DIM, device="cuda", dtype=torch.float16)
-        v_fp16 = torch.randn(N_KV_HEADS, n_kv, HEAD_DIM, device="cuda", dtype=torch.float16)
+        k_fp16 = torch.randn(N_KV_HEADS, cache_n_kv, HEAD_DIM, device="cuda", dtype=torch.float16)
+        v_fp16 = torch.randn(N_KV_HEADS, cache_n_kv, HEAD_DIM, device="cuda", dtype=torch.float16)
         q_fp16 = torch.randn(1, N_KV_HEADS, 1, HEAD_DIM, device="cuda", dtype=torch.float16)
 
         # ── FP16 baseline ────────────────────────────────────────────────────
@@ -146,7 +152,7 @@ def bench_attention_seq_lens(
         q_rot  = tq.rotate_queries(q_flat)
 
         try:
-            n_kv_total = N_KV_HEADS * n_kv
+            n_kv_total = N_KV_HEADS * cache_n_kv
             t_ms = timed(
                 lambda: attention_tq3(q_rot, k_comp, v_comp, tq),
                 n_warmup, n_iters
@@ -187,7 +193,9 @@ def main():
     parser.add_argument("--n-warmup", type=int, default=5)
     parser.add_argument("--bits", type=int, default=3, choices=[2, 3, 4])
     parser.add_argument("--output", type=str, default=None)
+    add_swa_args(parser)
     args = parser.parse_args()
+    print_swa_status(args.swa, args.window if args.swa == "on" else None)
 
     print(f"=== TurboQuant Attention Throughput Benchmark ===")
     print(f"Device:     {torch.cuda.get_device_name(0)}")
@@ -201,6 +209,8 @@ def main():
         n_iters=args.n_iters,
         n_warmup=args.n_warmup,
         bits=args.bits,
+        swa=args.swa,
+        window=args.window,
     )
 
     output = {

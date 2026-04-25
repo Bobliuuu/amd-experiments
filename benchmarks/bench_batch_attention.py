@@ -30,6 +30,8 @@ RESULTS_DIR = Path(__file__).parent.parent / "results"
 sys.path.insert(0, str(KERNELS_DIR))
 RESULTS_DIR.mkdir(exist_ok=True)
 
+from cache_utils import add_swa_args, clamp_seq_to_window, print_swa_status
+
 
 def _median_ms(fn, warmup: int, reps: int) -> float:
     for _ in range(warmup):
@@ -53,6 +55,8 @@ def run(
     reps: int = 30,
     head_dim: int = 128,
     n_heads: int = 32,
+    swa: str = "off",
+    window: int = 0,
 ):
     from turboquant_mi300x import TurboQuantMI300X
     from tq_triton import (
@@ -79,20 +83,22 @@ def run(
     all_results = []
 
     for seq_k in seq_lens:
+        cache_seq_k = clamp_seq_to_window(seq_k, swa, window)
         # Bytes read per decode step per batch element (K + V, all heads)
-        bw_fp16 = n_heads * seq_k * head_dim * 2 * 2   # FP16 K+V
-        bw_bp   = n_heads * seq_k * 52          * 2   # bit-plane K+V (52B norm+planes per token)
-        bw_nb   = n_heads * seq_k * 68          * 2   # nibble K+V (64B nibbles + 4B norm per token)
+        # Uses cache_seq_k since that's the actual stored cache size.
+        bw_fp16 = n_heads * cache_seq_k * head_dim * 2 * 2   # FP16 K+V
+        bw_bp   = n_heads * cache_seq_k * 52          * 2   # bit-plane K+V (52B norm+planes per token)
+        bw_nb   = n_heads * cache_seq_k * 68          * 2   # nibble K+V (64B nibbles + 4B norm per token)
 
-        print(f"\n── seq_k = {seq_k:,}  "
+        print(f"\n── seq_k = {seq_k:,}  cache_seq_k = {cache_seq_k:,}  "
               f"(FP16 KV: {bw_fp16/1e6:.0f} MB  "
               f"TQ3-BP KV: {bw_bp/1e6:.0f} MB  "
               f"TQ3-Nb KV: {bw_nb/1e6:.0f} MB  per step per batch-elem) ──")
 
         # Compress once for a single batch element, then expand
         torch.cuda.empty_cache()
-        k1 = torch.randn(1, n_heads, seq_k, head_dim, device="cuda", dtype=torch.float16)
-        v1 = torch.randn(1, n_heads, seq_k, head_dim, device="cuda", dtype=torch.float16)
+        k1 = torch.randn(1, n_heads, cache_seq_k, head_dim, device="cuda", dtype=torch.float16)
+        v1 = torch.randn(1, n_heads, cache_seq_k, head_dim, device="cuda", dtype=torch.float16)
         kp1, kn1, vp1, vn1 = compress_kv_for_triton(k1, v1, tq)
         knb1, kn21, vnb1, vn21 = compress_kv_nibble(k1, v1, tq)
         # Keep k1/v1 for batch expansion (FP16 SDPA needs contiguous copies)
@@ -161,13 +167,14 @@ def run(
                   f"  {tps_fp16:>11.1f}  {tps_bp:>10.1f}  {tps_nb:>10.1f}")
 
             seq_results.append({
-                "seq_k": seq_k, "batch": batch,
+                "seq_k": seq_k, "cache_seq_k": cache_seq_k, "batch": batch,
                 "fp16_ms": ms_fp16, "bp_ms": ms_bp, "nb_ms": ms_nb,
                 "ratio_bp": ratio_bp, "ratio_nb": ratio_nb,
                 "tps_fp16": tps_fp16, "tps_bp": tps_bp, "tps_nb": tps_nb,
                 "kv_bw_fp16_GBs": bw_fp16 * batch / (ms_fp16 / 1000) / 1e9,
                 "kv_bw_bp_GBs":   bw_bp   * batch / (ms_bp   / 1000) / 1e9,
                 "kv_bw_nb_GBs":   bw_nb   * batch / (ms_nb   / 1000) / 1e9,
+                "swa_window":     window if swa == "on" else None,
             })
 
             del q_fp16, q_rot, k_b, v_b, kp, kn, vp, vn, knb, kn2, vnb, vn2
@@ -221,13 +228,17 @@ def main():
     ap.add_argument("--warmup", type=int, default=5)
     ap.add_argument("--reps",   type=int, default=30)
     ap.add_argument("--out", default=str(RESULTS_DIR / "bench_batch_attention.json"))
+    add_swa_args(ap)
     args = ap.parse_args()
+    print_swa_status(args.swa, args.window if args.swa == "on" else None)
 
     results = run(
         batch_sizes=args.batch_sizes,
         seq_lens=args.seq_lens,
         warmup=args.warmup,
         reps=args.reps,
+        swa=args.swa,
+        window=args.window,
     )
     _print_summary(results)
 

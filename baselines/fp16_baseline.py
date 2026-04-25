@@ -31,6 +31,15 @@ if _hf_token := os.environ.get("HF_TOKEN"):
     from huggingface_hub import login
     login(token=_hf_token, add_to_git_credential=False)
 
+import sys
+sys.path.insert(0, str(Path(__file__).parent.parent / "kernels"))
+from cache_utils import (
+    add_swa_args,
+    print_swa_status,
+    resolve_swa_window,
+    truncate_kv_to_window,
+)
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Setup
 # ──────────────────────────────────────────────────────────────────────────────
@@ -82,6 +91,7 @@ def benchmark_fp16_decode(
     n_decode: int = 100,
     n_runs: int = 5,
     kv_dtype: torch.dtype = torch.float16,
+    swa_window: int | None = None,
 ) -> Dict:
     """
     Benchmark decode-phase throughput (tokens/sec) at given context length.
@@ -113,6 +123,10 @@ def benchmark_fp16_decode(
             (k.to(kv_dtype), v.to(kv_dtype)) for k, v in past_kv
         )
 
+    # SWA: truncate prefill cache to window before decode begins
+    if swa_window is not None:
+        truncate_kv_to_window(past_kv, swa_window)
+
     # ── Decode loop ────────────────────────────────────────────────────────────
     peak_vram = vram_peak_gb()
     times = []
@@ -128,6 +142,8 @@ def benchmark_fp16_decode(
             with torch.no_grad():
                 out = model(next_token, past_key_values=kv, use_cache=True)
             kv = out.past_key_values
+            if swa_window is not None:
+                truncate_kv_to_window(kv, swa_window)
             next_token = out.logits[:, -1:, :].argmax(dim=-1)
 
         torch.cuda.synchronize()
@@ -147,6 +163,7 @@ def benchmark_fp16_decode(
         "n_decode":       n_decode,
         "kv_dtype":       str(kv_dtype),
         "n_runs":         n_runs,
+        "swa_window":     swa_window,
     }
 
 
@@ -169,6 +186,7 @@ def main():
                         help="Skip seq_lens larger than this (VRAM limit)")
     parser.add_argument("--output", type=str, default=None,
                         help="Output JSON path (default: results/fp16_baseline_{model}.json)")
+    add_swa_args(parser)
     args = parser.parse_args()
 
     print(f"=== FP16 Baseline Benchmark ===")
@@ -198,11 +216,16 @@ def main():
     model.eval()
     print(f"Model loaded. Parameters: {sum(p.numel() for p in model.parameters())/1e9:.1f}B")
 
+    effective_window = resolve_swa_window(args.swa, model, args.window)
+    print_swa_status(args.swa, effective_window)
+
     # Run benchmarks
     results = {
         "model":       args.model,
         "device":      get_device_info(),
         "kv_config":   "fp16",
+        "swa":         args.swa,
+        "swa_window":  effective_window,
         "benchmarks":  [],
     }
 
@@ -218,6 +241,7 @@ def main():
                 seq_len=seq_len,
                 n_decode=args.n_decode,
                 n_runs=args.n_runs,
+                swa_window=effective_window,
             )
             results["benchmarks"].append(r)
             print(f" {r['tokens_per_sec']:7.1f} tok/s | "

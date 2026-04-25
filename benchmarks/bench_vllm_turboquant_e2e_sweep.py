@@ -30,8 +30,10 @@ import torch
 ROOT = Path(__file__).resolve().parents[1]
 RESULTS_DIR = ROOT / "results"
 sys.path.insert(0, str(ROOT / "benchmarks"))
+sys.path.insert(0, str(ROOT / "kernels"))
 
 from bench_vllm_turboquant_ab import _make_prompts, run_turboquant_vllm_cell  # noqa: E402
+from cache_utils import add_swa_args, print_swa_status, vllm_swa_warn  # noqa: E402
 
 
 def main() -> None:
@@ -84,7 +86,11 @@ def main() -> None:
     )
     p.add_argument("--quantization", default="awq")
     p.add_argument("--output", type=str, default="")
+    add_swa_args(p)
     args = p.parse_args()
+    print_swa_status(args.swa, args.window if args.swa == "on" else None)
+    sweep_max = max([int(x.strip()) for x in args.max_model_lens.split(",") if x.strip()] or [4096])
+    vllm_swa_warn(args.swa, sweep_max)
 
     max_lens = [int(x.strip()) for x in args.max_model_lens.split(",") if x.strip()]
     nplist = [int(x.strip()) for x in args.num_prompts_list.split(",") if x.strip()]
@@ -178,6 +184,8 @@ def main() -> None:
         "quant_model": args.quant_model or None,
         "quantization": args.quantization,
         "device": torch.cuda.get_device_name(0) if torch.cuda.is_available() else "",
+        "swa": args.swa,
+        "swa_window": args.window if args.swa == "on" else None,
         "rows": rows,
     }
     outp = Path(args.output) if args.output else RESULTS_DIR / "bench_vllm_turboquant_e2e_sweep.json"

@@ -29,8 +29,16 @@ from torch.profiler import ProfilerActivity, profile
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "kernels"))
 RESULTS = ROOT / "results"
 RESULTS.mkdir(parents=True, exist_ok=True)
+
+from cache_utils import (
+    add_swa_args,
+    print_swa_status,
+    resolve_swa_window,
+    truncate_kv_to_window,
+)
 
 
 def _categorize(key: str) -> str:
@@ -81,6 +89,8 @@ def run_profile(
     n_warmup: int,
     batch_size: int,
     max_memory_gb: float | None,
+    swa: str = "off",
+    window: int = 0,
 ) -> Dict:
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -101,11 +111,16 @@ def run_profile(
     model = AutoModelForCausalLM.from_pretrained(model_name, **kwargs)
     model.eval()
 
+    swa_window = resolve_swa_window(swa, model, window)
+    print_swa_status(swa, swa_window)
+
     prompt_ids = _make_prompt_ids(tok, seq_len, batch_size)
     with torch.no_grad():
         torch.cuda.synchronize()
         out = model(prompt_ids, use_cache=True)
     cache = out.past_key_values
+    if swa_window is not None:
+        truncate_kv_to_window(cache, swa_window)
     del out
     torch.cuda.synchronize()
 
@@ -120,6 +135,8 @@ def run_profile(
         with torch.no_grad():
             o = model(next_token, past_key_values=cache, use_cache=True)
         cache = o.past_key_values
+        if swa_window is not None:
+            truncate_kv_to_window(cache, swa_window)
         next_token = o.logits[:, -1:, :].argmax(dim=-1)
         del o
     torch.cuda.synchronize()
@@ -132,6 +149,8 @@ def run_profile(
             with torch.no_grad():
                 o = model(next_token, past_key_values=cache, use_cache=True)
             cache = o.past_key_values
+            if swa_window is not None:
+                truncate_kv_to_window(cache, swa_window)
             next_token = o.logits[:, -1:, :].argmax(dim=-1)
             del o
     torch.cuda.synchronize()
@@ -180,6 +199,7 @@ def run_profile(
         "n_decode": n_decode,
         "n_warmup": n_warmup,
         "batch_size": batch_size,
+        "swa_window": swa_window,
         "wall_time_decode_s": round(wall_s, 4),
         "tokens_per_sec": round(n_decode * batch_size / wall_s, 2),
         "profiler_self_cuda_ms_total": round(total_cuda_self, 3),
@@ -208,6 +228,7 @@ def main() -> None:
         type=str,
         default=str(RESULTS / "profile_full_model_decode.json"),
     )
+    add_swa_args(p)
     args = p.parse_args()
 
     if not torch.cuda.is_available():
@@ -222,6 +243,8 @@ def main() -> None:
         args.n_warmup,
         args.batch_size,
         max_mem,
+        swa=args.swa,
+        window=args.window,
     )
     out["device"] = torch.cuda.get_device_name(0)
     out["torch"] = torch.__version__

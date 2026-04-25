@@ -31,6 +31,10 @@ def _ensure_paths() -> None:
             sys.path.insert(0, s)
 
 
+_ensure_paths()
+from cache_utils import add_swa_args, print_swa_status, vllm_swa_warn
+
+
 def _filter_llm_kwargs(llm_cls: Any, llm_kw: dict) -> tuple[dict, list[str]]:
     try:
         sig = inspect.signature(llm_cls.__init__)
@@ -55,7 +59,10 @@ def main() -> None:
         type=Path,
         default=_ROOT / "results" / "bench_vllm_isoquant_smoke.json",
     )
+    add_swa_args(parser)
     args = parser.parse_args()
+    print_swa_status(args.swa, args.window if args.swa == "on" else None)
+    vllm_swa_warn(args.swa, args.max_model_len)
 
     _ensure_paths()
     from vllm_isoquant_registry import register_isoquant_rocm_backend
@@ -111,6 +118,9 @@ def main() -> None:
         "output_tok_per_s": round(n_tok / gen_s, 2) if gen_s > 0 else 0.0,
         "llm_kwargs_dropped": dropped,
         "enforce_eager": args.enforce_eager,
+        "max_model_len": args.max_model_len,
+        "swa": args.swa,
+        "swa_window": args.window if args.swa == "on" else None,
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(out, indent=2), encoding="utf-8")

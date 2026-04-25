@@ -47,6 +47,8 @@ RESULTS_DIR = Path(__file__).parent.parent / "results"
 sys.path.insert(0, str(KERNELS_DIR))
 RESULTS_DIR.mkdir(exist_ok=True)
 
+from cache_utils import add_swa_args, clamp_seq_to_window, print_swa_status
+
 
 def parse_method_spec(method_spec: str) -> tuple[str, int]:
     """Return (method_key, bits) for e.g. ``planar3`` → (``planar``, 3)."""
@@ -245,7 +247,9 @@ def main():
     parser.add_argument("--n-kv-heads", type=int, default=8)
     parser.add_argument("--head-dim", type=int, default=128)
     parser.add_argument("--output", type=str, default="")
+    add_swa_args(parser)
     args = parser.parse_args()
+    print_swa_status(args.swa, args.window if args.swa == "on" else None)
 
     device = "cuda"
     model_info = MODEL_PARAMS.get(args.model, {
@@ -291,20 +295,21 @@ def main():
                 comp_ratio = COMPRESSION_RATIO.get(bits, 4.92)
 
             for batch_size in args.batch_sizes:
-                # Skip if OOM risk: batch × seq × layers × kv_heads × head_dim × 2B
-                kv_bytes = batch_size * seq_len * n_layers * n_kv_heads * head_dim * 2
+                cache_seq = clamp_seq_to_window(seq_len, args.swa, args.window)
+                # Skip if OOM risk: batch × cache_seq × layers × kv_heads × head_dim × 2B
+                kv_bytes = batch_size * cache_seq * n_layers * n_kv_heads * head_dim * 2
                 if kv_bytes > 150e9:  # > 150 GB FP16 KV — definitely OOM
                     print(f"  {method_spec:<12} {batch_size:>6} SKIP (OOM risk: {kv_bytes/1e9:.0f} GB KV)")
                     continue
 
                 try:
-                    cache = build_cache(method, bits, batch_size, seq_len,
+                    cache = build_cache(method, bits, batch_size, cache_seq,
                                         n_layers, n_kv_heads, head_dim, device)
 
                     # Warmup
                     for _ in range(args.n_warmup):
                         simulate_batch_decode_step(
-                            cache, method, bits, batch_size, seq_len,
+                            cache, method, bits, batch_size, cache_seq,
                             n_layers, n_kv_heads, head_dim, device)
                     sync()
 
@@ -312,7 +317,7 @@ def main():
                     step_times = []
                     for _ in range(args.n_measure):
                         t = simulate_batch_decode_step(
-                            cache, method, bits, batch_size, seq_len,
+                            cache, method, bits, batch_size, cache_seq,
                             n_layers, n_kv_heads, head_dim, device)
                         step_times.append(t)
 
@@ -327,7 +332,7 @@ def main():
                     # Theoretical speedup from bandwidth model
                     theoret = compute_theoretical_speedup(
                         comp_ratio, weight_bytes, n_layers, n_kv_heads,
-                        seq_len, head_dim, batch_size)
+                        cache_seq, head_dim, batch_size)
 
                     if method == "fp16":
                         fp16_tps[batch_size] = tps
@@ -339,6 +344,7 @@ def main():
                         "method": method,
                         "bits": bits,
                         "seq_len": seq_len,
+                        "cache_seq_len": cache_seq,
                         "batch_size": batch_size,
                         "tok_per_sec": tps,
                         "latency_ms": lat_ms,
@@ -346,6 +352,7 @@ def main():
                         "theoretical_speedup": theoret,
                         "measured_speedup_vs_fp16": speedup_vs_fp16,
                         "compression_ratio": comp_ratio,
+                        "swa_window": args.window if args.swa == "on" else None,
                     }
                     all_results.append(result)
 

@@ -47,6 +47,8 @@ TQ_BACKENDS_DIR = Path(__file__).parent.parent / "tq_backends" / "attention" / "
 RESULTS_DIR.mkdir(exist_ok=True)
 sys.path.insert(0, str(KERNELS_DIR))
 
+from cache_utils import add_swa_args, print_swa_status, vllm_swa_warn
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # IsoQuant backend registration
@@ -127,6 +129,7 @@ def _run_backend(
     output_len: int,
     gpu_memory_utilization: float,
     extra_engine_kwargs: dict,
+    max_model_len: int = 4096,
 ) -> dict:
     """
     Start a vLLM LLM engine, run all prompts, collect metrics, shut down.
@@ -144,7 +147,7 @@ def _run_backend(
         model=model,
         dtype="float16",
         gpu_memory_utilization=gpu_memory_utilization,
-        max_model_len=4096,
+        max_model_len=max_model_len,
         enforce_eager=False,      # use CUDA graph where available
         **extra_engine_kwargs,
     )
@@ -259,7 +262,12 @@ def main():
                         help="IsoQuant rotation method")
     parser.add_argument("--iq-bits", type=int, default=3, choices=[2, 3, 4])
     parser.add_argument("--output", type=str, default=None)
+    parser.add_argument("--max-model-len", type=int, default=4096,
+                        help="Forwarded to vLLM LLM().")
+    add_swa_args(parser)
     args = parser.parse_args()
+    print_swa_status(args.swa, args.window if args.swa == "on" else None)
+    vllm_swa_warn(args.swa, args.max_model_len)
 
     print("=" * 60)
     print("vLLM Serving Benchmark: FP16 vs IsoQuant KV Cache")
@@ -308,6 +316,7 @@ def main():
             output_len=args.output_len,
             gpu_memory_utilization=args.gpu_memory_utilization,
             extra_engine_kwargs={},
+            max_model_len=args.max_model_len,
         )
         all_results.append(result)
 
@@ -329,6 +338,7 @@ def main():
                 # (vLLM doesn't know our compression ratio, so it will
                 #  over-provision — this is conservative / safe)
             },
+            max_model_len=args.max_model_len,
         )
         all_results.append(result)
         os.environ.pop("VLLM_ATTENTION_BACKEND", None)
@@ -360,6 +370,9 @@ def main():
         "input_len":  actual_input_len,
         "output_len": args.output_len,
         "num_prompts": args.num_prompts,
+        "max_model_len": args.max_model_len,
+        "swa":        args.swa,
+        "swa_window": args.window if args.swa == "on" else None,
         "device":     torch.cuda.get_device_name(0),
         "results":    all_results,
     }

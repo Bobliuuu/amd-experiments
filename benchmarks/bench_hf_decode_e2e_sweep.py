@@ -26,6 +26,13 @@ import torch
 
 ROOT = Path(__file__).resolve().parents[1]
 KERNELS = ROOT / "kernels"
+sys.path.insert(0, str(KERNELS))
+
+from cache_utils import (
+    add_swa_args,
+    print_swa_status,
+    resolve_swa_window,
+)
 
 
 def _load_bench_batch_decode():
@@ -51,6 +58,7 @@ def main() -> None:
         type=str,
         default=str(ROOT / "results" / "bench_hf_e2e_decode_sweep.json"),
     )
+    add_swa_args(p)
     args = p.parse_args()
 
     if str(KERNELS) not in sys.path:
@@ -80,13 +88,17 @@ def main() -> None:
     model.eval()
     tq = TurboQuantMI300X(bits=3, rotation_seed=42)
 
+    effective_window = resolve_swa_window(args.swa, model, args.window)
+    print_swa_status(args.swa, effective_window)
+
     rows = []
     for seq_len in args.seq_lens:
         for bs in args.batch_sizes:
             if not args.skip_fp16:
                 try:
                     r = bbd.bench_one(
-                        model, tok, tq, seq_len, bs, "fp16", args.n_warmup, args.n_measure
+                        model, tok, tq, seq_len, bs, "fp16", args.n_warmup, args.n_measure,
+                        swa_window=effective_window,
                     )
                     r["mode_label"] = "hf_fp16_sdpa"
                     rows.append(r)
@@ -107,7 +119,8 @@ def main() -> None:
             if not args.skip_tq:
                 try:
                     r = bbd.bench_one(
-                        model, tok, tq, seq_len, bs, "tq3", args.n_warmup, args.n_measure
+                        model, tok, tq, seq_len, bs, "tq3", args.n_warmup, args.n_measure,
+                        swa_window=effective_window,
                     )
                     r["mode_label"] = "hf_tq_sim_roundtrip_per_step"
                     rows.append(r)
@@ -130,6 +143,8 @@ def main() -> None:
         "device": torch.cuda.get_device_name(0),
         "torch": torch.__version__,
         "hip": getattr(torch.version, "hip", None),
+        "swa": args.swa,
+        "swa_window": effective_window,
         "disclaimer": (
             "HF path uses Transformers SDPA on FP16 KV. 'tq_sim' runs TurboQuant "
             "compress+decompress on the DynamicCache after each decode step — not "
