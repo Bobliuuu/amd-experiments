@@ -19,7 +19,11 @@ import time
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Dict, List
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "kernels"))
+from cache_utils import add_swa_args, print_swa_status, vllm_swa_warn
 
 
 def _post_json(url: str, payload: Dict, timeout_s: float) -> Dict:
@@ -178,6 +182,9 @@ def run(args: argparse.Namespace) -> Dict:
             "concurrency": args.concurrency,
             "prompt_tokens_hint": args.prompt_tokens,
             "max_tokens": args.max_tokens,
+            "max_model_len": args.max_model_len,
+            "swa": args.swa,
+            "swa_window": args.window if args.swa == "on" else None,
             "successful_requests": len(ok),
             "failed_requests": len(fail),
             "total_output_tokens": total_output_tokens,
@@ -231,9 +238,12 @@ def parse_args() -> argparse.Namespace:
         default=sys.executable,
         help="Python executable used to launch vLLM server.",
     )
+    add_swa_args(p)
     args = p.parse_args()
     if args.attention_backend == "":
         args.attention_backend = None
+    print_swa_status(args.swa, args.window if args.swa == "on" else None)
+    vllm_swa_warn(args.swa, args.max_model_len)
     return args
 
 

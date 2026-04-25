@@ -26,6 +26,13 @@ RESULTS_DIR.mkdir(exist_ok=True)
 import sys
 sys.path.insert(0, str(KERNELS_DIR))
 
+from cache_utils import (
+    add_swa_args,
+    print_swa_status,
+    resolve_swa_window,
+    truncate_kv_to_window,
+)
+
 
 def make_prompt_ids(tokenizer, seq_len: int, batch_size: int = 1) -> torch.Tensor:
     pad_id = tokenizer.eos_token_id or 1
@@ -96,6 +103,7 @@ def main():
     parser.add_argument("--bits", type=int, default=3)
     parser.add_argument("--methods", nargs="+", default=["turbo", "planar", "iso", "rotor"])
     parser.add_argument("--output", type=str, default="")
+    add_swa_args(parser)
     args = parser.parse_args()
 
     from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -109,10 +117,16 @@ def main():
     )
     model.eval()
 
+    effective_window = resolve_swa_window(args.swa, model, args.window)
+    print_swa_status(args.swa, effective_window)
+
     prompt_ids = make_prompt_ids(tokenizer, args.seq_len, args.batch_size)
     with torch.no_grad():
         out = model(prompt_ids, use_cache=True)
     cache = out.past_key_values
+
+    if effective_window is not None:
+        truncate_kv_to_window(cache, effective_window)
 
     fp16_bytes = kv_memory_bytes_from_cache(cache)
     cache_layers = len(cache.layers)
@@ -159,6 +173,8 @@ def main():
         "seq_len": args.seq_len,
         "batch_size": args.batch_size,
         "bits": args.bits,
+        "swa": args.swa,
+        "swa_window": effective_window,
         "results": rows,
     }
     out_path = Path(args.output) if args.output else (RESULTS_DIR / "bench_runtime_ratio_all_methods.json")

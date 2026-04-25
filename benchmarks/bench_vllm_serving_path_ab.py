@@ -23,6 +23,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 RESULTS = ROOT / "results"
 RESULTS.mkdir(parents=True, exist_ok=True)
+sys.path.insert(0, str(ROOT / "kernels"))
+
+from cache_utils import add_swa_args, print_swa_status, vllm_swa_warn
 
 
 def main() -> None:
@@ -37,7 +40,10 @@ def main() -> None:
     p.add_argument("--quant-model", default="")
     p.add_argument("--quantization", default="awq")
     p.add_argument("--output", type=str, default="")
+    add_swa_args(p)
     args = p.parse_args()
+    print_swa_status(args.swa, args.window if args.swa == "on" else None)
+    vllm_swa_warn(args.swa, args.max_model_len)
 
     ab = ROOT / "benchmarks" / "bench_vllm_turboquant_ab.py"
     common = [
@@ -60,6 +66,7 @@ def main() -> None:
     ]
     if args.quant_model:
         common += ["--quant-model", args.quant_model, "--quantization", args.quantization]
+    common += ["--swa", args.swa, "--window", str(args.window)]
 
     out_eager = RESULTS / "_serving_path_eager.json"
     out_graph = RESULTS / "_serving_path_graphs.json"
@@ -96,6 +103,8 @@ def main() -> None:
         "model": args.model,
         "only_backend": args.only_backend,
         "gpu_memory_utilization": args.gpu_memory_utilization,
+        "swa": args.swa,
+        "swa_window": args.window if args.swa == "on" else None,
         "eager": eager_obj.get("results", [{}])[0],
         "cuda_graphs_default": graph_row,
         "cuda_graphs_error": graph_error,

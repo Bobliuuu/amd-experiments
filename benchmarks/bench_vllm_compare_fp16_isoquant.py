@@ -12,6 +12,9 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Tuple
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "kernels"))
+from cache_utils import add_swa_args, print_swa_status, vllm_swa_warn
+
 
 def _run_case(cmd: List[str], cwd: str) -> Dict:
     proc = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
@@ -66,6 +69,10 @@ def _mk_cmd(args: argparse.Namespace, mode: str, out_json: str) -> List[str]:
         out_json,
         "--python-bin",
         args.python_bin,
+        "--swa",
+        args.swa,
+        "--window",
+        str(args.window),
     ]
     if mode == "fp16":
         base += ["--kv-cache-dtype", "auto", "--attention-backend", ""]
@@ -129,11 +136,14 @@ def parse_args() -> argparse.Namespace:
         default=sys.executable,
         help="Python executable used by serving benchmark to start vLLM server.",
     )
+    add_swa_args(p)
     return p.parse_args()
 
 
 def main() -> int:
     args = parse_args()
+    print_swa_status(args.swa, args.window if args.swa == "on" else None)
+    vllm_swa_warn(args.swa, args.max_model_len)
     out_prefix = Path(args.output_prefix)
     out_prefix.parent.mkdir(parents=True, exist_ok=True)
     fp16_json = f"{args.output_prefix}_fp16.json"

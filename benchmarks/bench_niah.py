@@ -36,6 +36,24 @@ RESULTS_DIR = Path(__file__).parent.parent / "results"
 sys.path.insert(0, str(KERNELS_DIR))
 RESULTS_DIR.mkdir(exist_ok=True)
 
+from cache_utils import (
+    add_swa_args,
+    clamp_seq_to_window,
+    print_swa_status,
+    resolve_swa_window,
+)
+
+
+def _swa_safe_needle_position(default_pos: float, ctx_len: int,
+                               window: int | None, safety: int = 256) -> float:
+    """Push needle into the last (window - safety) tokens when SWA is on,
+    so the model can actually attend to it. Returns default_pos if SWA is off
+    or context fits within window."""
+    if window is None or ctx_len <= window:
+        return default_pos
+    min_pos = max(0.0, 1.0 - max(window - safety, 1) / ctx_len)
+    return max(default_pos, min_pos)
+
 # Needle facts and their expected answers
 NEEDLES = [
     ("The secret passcode is ALPHA-7734-ZETA.", "ALPHA-7734-ZETA"),
@@ -181,6 +199,9 @@ def run_niah(args, device: str):
     model.eval()
     print("Model loaded.\n")
 
+    effective_window = resolve_swa_window(args.swa, model, args.window)
+    print_swa_status(args.swa, effective_window)
+
     all_results = []
 
     for method_spec in args.methods:
@@ -215,6 +236,9 @@ def run_niah(args, device: str):
 
                 # Vary needle position across trials
                 needle_pos = 0.1 + (trial / max(args.n_trials - 1, 1)) * 0.8
+                # When SWA is on and ctx > window, push needle into the window
+                # so the model can actually attend to it (otherwise broken by design).
+                needle_pos = _swa_safe_needle_position(needle_pos, ctx_len, effective_window)
 
                 prompt = build_niah_prompt(needle_text, ctx_len, needle_pos)
 
@@ -288,6 +312,8 @@ def print_summary(results: list):
 
 
 def run_synthetic_niah(args, device: str) -> list:
+    # Synthetic mode: no model, but still honor the user's --swa intent
+    # by clamping context length to the requested window.
     """
     Synthetic Needle-in-Haystack: tests attention rank preservation under compression.
 
@@ -326,7 +352,7 @@ def run_synthetic_niah(args, device: str) -> list:
             _ = quantizer.compress(torch.randn(64, head_dim, device=device))
 
         for ctx_len in args.context_lens:
-            n_tokens = ctx_len  # one K vector per token
+            n_tokens = clamp_seq_to_window(ctx_len, args.swa, args.window)
             passes = 0
             rank_sum = 0
             cos_sims = []
@@ -389,11 +415,13 @@ def run_synthetic_niah(args, device: str) -> list:
                 "method": method,
                 "bits": bits,
                 "context_len": ctx_len,
+                "cache_n_tokens": n_tokens,
                 "n_trials": args.n_trials,
                 "pass_rate": pass_rate,
                 "avg_rank": avg_rank,
                 "avg_cos_sim": avg_cs,
                 "synthetic": True,
+                "swa_window": args.window if args.swa == "on" else None,
             }
             all_results.append(result)
             print(f"  {method_spec:<12} {ctx_len:>8} {pass_rate:>7.0%}  {avg_rank:>8.1f} {avg_cs:>12.4f}")
@@ -413,6 +441,7 @@ def main():
     parser.add_argument("--synthetic", action="store_true",
                         help="Run synthetic attention-rank-preservation test (no model needed)")
     parser.add_argument("--output", type=str, default="")
+    add_swa_args(parser)
     args = parser.parse_args()
 
     device = "cuda"

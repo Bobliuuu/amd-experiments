@@ -38,6 +38,10 @@ def _ensure_import_paths() -> None:
             sys.path.insert(0, p)
 
 
+_ensure_import_paths()
+from cache_utils import add_swa_args, print_swa_status, vllm_swa_warn
+
+
 def _make_prompts(tokenizer, n: int, input_len: int) -> List[str]:
     rng_state = torch.get_rng_state()
     torch.manual_seed(0)
@@ -213,7 +217,10 @@ def main() -> None:
         action="store_true",
         help="Disable CUDA graph capture (recommended under rocprofv2 to avoid huge traces / launch failures).",
     )
+    add_swa_args(parser)
     args = parser.parse_args()
+    print_swa_status(args.swa, args.window if args.swa == "on" else None)
+    vllm_swa_warn(args.swa, args.max_model_len)
 
     from transformers import AutoTokenizer
 
@@ -288,6 +295,8 @@ def main() -> None:
         "max_num_seqs": max_seqs,
         "device": torch.cuda.get_device_name(0),
         "enforce_eager": args.enforce_eager,
+        "swa": args.swa,
+        "swa_window": args.window if args.swa == "on" else None,
         "results": results,
     }
     out_path = (

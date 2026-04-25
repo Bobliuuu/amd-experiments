@@ -34,6 +34,15 @@ if _hf_token := os.environ.get("HF_TOKEN"):
     from huggingface_hub import login
     login(token=_hf_token, add_to_git_credential=False)
 
+import sys
+sys.path.insert(0, str(Path(__file__).parent.parent / "kernels"))
+from cache_utils import (
+    add_swa_args,
+    print_swa_status,
+    resolve_swa_window,
+    truncate_kv_to_window,
+)
+
 RESULTS_DIR = Path(__file__).parent.parent / "results"
 RESULTS_DIR.mkdir(exist_ok=True)
 
@@ -104,6 +113,7 @@ def benchmark_fp8_decode(
     seq_len: int,
     n_decode: int = 100,
     n_runs: int = 5,
+    swa_window: int | None = None,
 ) -> Dict:
     """
     Benchmark FP8 KV cache decode throughput (ideal / native-attention model).
@@ -151,6 +161,10 @@ def benchmark_fp8_decode(
     fp8_bytes = fp16_bytes // 2
     compression_ratio = fp16_bytes / fp8_bytes
 
+    # SWA: truncate prefill cache to window before FP8 round-trip (cheaper)
+    if swa_window is not None:
+        truncate_kv_to_window(cache, swa_window)
+
     # Apply FP8 round-trip once after prefill to place KV on the FP8 grid.
     # During decode we do NOT re-apply this cast per step: that would add
     # ~20-37% Python overhead that a native FP8 attention kernel avoids.
@@ -170,6 +184,8 @@ def benchmark_fp8_decode(
             with torch.no_grad():
                 out = model(next_token, past_key_values=cache, use_cache=True)
             cache = out.past_key_values
+            if swa_window is not None:
+                truncate_kv_to_window(cache, swa_window)
             next_token = out.logits[:, -1:, :].argmax(dim=-1)
 
         torch.cuda.synchronize()
@@ -190,6 +206,7 @@ def benchmark_fp8_decode(
         "kv_dtype":          "fp8_e4m3fnuz",
         "compression_ratio": round(compression_ratio, 2),
         "n_runs":            n_runs,
+        "swa_window":        swa_window,
     }
 
 
@@ -206,6 +223,7 @@ def main():
     parser.add_argument("--n-runs", type=int, default=5)
     parser.add_argument("--max-seq-len", type=int, default=None)
     parser.add_argument("--output", type=str, default=None)
+    add_swa_args(parser)
     args = parser.parse_args()
 
     if not _fp8_available():
@@ -232,6 +250,9 @@ def main():
     actual_dtype = next(model.parameters()).dtype
     print(f"Model loaded: {sum(p.numel() for p in model.parameters())/1e9:.1f}B params  dtype={actual_dtype}")
 
+    effective_window = resolve_swa_window(args.swa, model, args.window)
+    print_swa_status(args.swa, effective_window)
+
     # #region agent log
     import json as _j, time as _t
     with open('/root/workspace/.cursor/debug-5ac54c.log', 'a') as _lf:
@@ -242,6 +263,8 @@ def main():
         "model":    args.model,
         "device":   {"name": torch.cuda.get_device_name(0)},
         "kv_config": "fp8_e4m3fnuz",
+        "swa":       args.swa,
+        "swa_window": effective_window,
         "benchmarks": [],
     }
 
@@ -252,7 +275,8 @@ def main():
         print(f"  seq_len={seq_len:6d} ...", end="", flush=True)
         try:
             r = benchmark_fp8_decode(model, tokenizer, seq_len,
-                                     n_decode=args.n_decode, n_runs=args.n_runs)
+                                     n_decode=args.n_decode, n_runs=args.n_runs,
+                                     swa_window=effective_window)
             results["benchmarks"].append(r)
             if "error" in r:
                 print(f" ERROR: {r['error']}")

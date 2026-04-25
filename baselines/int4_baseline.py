@@ -34,6 +34,15 @@ if _hf_token := os.environ.get("HF_TOKEN"):
     from huggingface_hub import login
     login(token=_hf_token, add_to_git_credential=False)
 
+import sys
+sys.path.insert(0, str(Path(__file__).parent.parent / "kernels"))
+from cache_utils import (
+    add_swa_args,
+    print_swa_status,
+    resolve_swa_window,
+    truncate_kv_to_window,
+)
+
 RESULTS_DIR = Path(__file__).parent.parent / "results"
 RESULTS_DIR.mkdir(exist_ok=True)
 
@@ -130,6 +139,7 @@ def make_prompt_ids(tokenizer, seq_len: int) -> torch.Tensor:
 def benchmark_int4_decode(
     model, tokenizer, seq_len: int,
     n_decode: int = 100, n_runs: int = 5,
+    swa_window: int | None = None,
 ) -> Dict:
     def _int4_roundtrip_cache(cache) -> None:
         """Apply INT4 quant-dequant in-place to all layers (transformers 5.x cache.layers)."""
@@ -162,6 +172,10 @@ def benchmark_int4_decode(
     int4_bytes = fp16_bytes // 4  # nibble-packed: 4 bits per element
     compression_ratio = fp16_bytes / int4_bytes
 
+    # SWA: truncate prefill cache to window before initial INT4 roundtrip
+    if swa_window is not None:
+        truncate_kv_to_window(cache, swa_window)
+
     # Apply initial INT4 round-trip (simulate INT4 storage after prefill)
     _int4_roundtrip_cache(cache)
     del prefill_out
@@ -179,6 +193,8 @@ def benchmark_int4_decode(
             with torch.no_grad():
                 out = model(next_token, past_key_values=cache, use_cache=True)
             cache = out.past_key_values
+            if swa_window is not None:
+                truncate_kv_to_window(cache, swa_window)
             _int4_roundtrip_cache(cache)
             next_token = out.logits[:, -1:, :].argmax(dim=-1)
 
@@ -197,6 +213,7 @@ def benchmark_int4_decode(
         "kv_dtype":          "int4_symmetric",
         "compression_ratio": round(compression_ratio, 2),
         "n_runs":            n_runs,
+        "swa_window":        swa_window,
     }
 
 
@@ -213,6 +230,7 @@ def main():
     parser.add_argument("--n-runs", type=int, default=5)
     parser.add_argument("--max-seq-len", type=int, default=None)
     parser.add_argument("--output", type=str, default=None)
+    add_swa_args(parser)
     args = parser.parse_args()
 
     print(f"=== INT4 KV Cache Baseline Benchmark ===")
@@ -231,10 +249,15 @@ def main():
     model.eval()
     print(f"Model loaded: {sum(p.numel() for p in model.parameters())/1e9:.1f}B params\n")
 
+    effective_window = resolve_swa_window(args.swa, model, args.window)
+    print_swa_status(args.swa, effective_window)
+
     results = {
         "model":    args.model,
         "device":   {"name": torch.cuda.get_device_name(0)},
         "kv_config": "int4_symmetric",
+        "swa":       args.swa,
+        "swa_window": effective_window,
         "benchmarks": [],
     }
 
@@ -245,7 +268,8 @@ def main():
         print(f"  seq_len={seq_len:6d} ...", end="", flush=True)
         try:
             r = benchmark_int4_decode(model, tokenizer, seq_len,
-                                      n_decode=args.n_decode, n_runs=args.n_runs)
+                                      n_decode=args.n_decode, n_runs=args.n_runs,
+                                      swa_window=effective_window)
             results["benchmarks"].append(r)
             print(f" {r['tokens_per_sec']:7.1f} tok/s | "
                   f"latency {r['latency_ms']:.1f} ms | "

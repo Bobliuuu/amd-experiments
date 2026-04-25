@@ -25,6 +25,9 @@ ROOT = Path(__file__).resolve().parents[1]
 RESULTS = ROOT / "results"
 ESTIMATE = ROOT / "scripts" / "estimate_vllm_safe_gpu_mem_frac.py"
 
+sys.path.insert(0, str(ROOT / "kernels"))
+from cache_utils import add_swa_args, print_swa_status, vllm_swa_warn  # noqa: E402
+
 
 def _default_python() -> Path:
     for p in (
@@ -68,7 +71,10 @@ def main() -> int:
         type=Path,
         default=RESULTS / "decode_bottleneck_smoke.json",
     )
+    add_swa_args(p)
     args = p.parse_args()
+    print_swa_status(args.swa, args.window if args.swa == "on" else None)
+    vllm_swa_warn(args.swa, args.max_model_len)
 
     py = args.python
     if not py.is_file():
@@ -113,6 +119,10 @@ def main() -> int:
             "fp16",
             "--output",
             str(tmp),
+            "--swa",
+            args.swa,
+            "--window",
+            str(args.window),
         ]
         r = subprocess.run(cmd, cwd=str(ROOT), env=env, capture_output=True, text=True)
         row = {

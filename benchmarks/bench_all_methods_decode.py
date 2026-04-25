@@ -37,6 +37,8 @@ RESULTS_DIR = Path(__file__).parent.parent / "results"
 sys.path.insert(0, str(KERNELS_DIR))
 RESULTS_DIR.mkdir(exist_ok=True)
 
+from cache_utils import add_swa_args, clamp_seq_to_window, print_swa_status
+
 
 def sync():
     torch.cuda.synchronize()
@@ -145,12 +147,15 @@ def bench_one_config(
 
     sm_scale = 1.0 / (args.head_dim ** 0.5)
 
-    print(f"  Building cache for {method_spec} seq={seq_len}...", end="", flush=True)
+    cache_seq = clamp_seq_to_window(seq_len, args.swa, args.window)
+
+    print(f"  Building cache for {method_spec} seq={seq_len} (cache_seq={cache_seq})...",
+          end="", flush=True)
     try:
         if method in ("fp8", "int4"):
             # These use simple per-element cast, no rotation
-            K_raw = torch.randn(args.n_layers, args.n_kv_heads, seq_len, args.head_dim, device=device)
-            V_raw = torch.randn(args.n_layers, args.n_kv_heads, seq_len, args.head_dim, device=device)
+            K_raw = torch.randn(args.n_layers, args.n_kv_heads, cache_seq, args.head_dim, device=device)
+            V_raw = torch.randn(args.n_layers, args.n_kv_heads, cache_seq, args.head_dim, device=device)
             if method == "fp8":
                 K_comp = K_raw.to(torch.float8_e4m3fnuz)
                 V_comp = V_raw.to(torch.float8_e4m3fnuz)
@@ -161,7 +166,7 @@ def bench_one_config(
             compress_obj = None
         else:
             cache, compress_obj = build_fake_kv_cache(
-                args.n_layers, args.n_kv_heads, seq_len,
+                args.n_layers, args.n_kv_heads, cache_seq,
                 args.head_dim, method, bits, device
             )
     except Exception as e:
@@ -179,7 +184,7 @@ def bench_one_config(
             _ = torch.bmm(torch.softmax(scores, -1), V_comp_f[0])
         else:
             decode_step_cost(cache, compress_obj, method, bits,
-                             args.n_layers, args.n_kv_heads, seq_len,
+                             args.n_layers, args.n_kv_heads, cache_seq,
                              args.head_dim, device, sm_scale)
     sync()
 
@@ -200,7 +205,7 @@ def bench_one_config(
             step_times.append(time.perf_counter() - t0)
         else:
             t = decode_step_cost(cache, compress_obj, method, bits,
-                                 args.n_layers, args.n_kv_heads, seq_len,
+                                 args.n_layers, args.n_kv_heads, cache_seq,
                                  args.head_dim, device, sm_scale)
             step_times.append(t)
 
@@ -227,6 +232,7 @@ def bench_one_config(
         "method": method,
         "bits": bits,
         "seq_len": seq_len,
+        "cache_seq_len": cache_seq,
         "tok_per_sec": tok_per_sec,
         "latency_ms": median_s * 1e3,
         "latency_p25_ms": p25_s * 1e3,
@@ -236,6 +242,7 @@ def bench_one_config(
         "n_kv_heads": args.n_kv_heads,
         "head_dim": args.head_dim,
         "n_decode": args.n_decode,
+        "swa_window": args.window if args.swa == "on" else None,
     }
 
 
@@ -255,7 +262,9 @@ def main():
                         help="Decode steps per (method, seq_len) config")
     parser.add_argument("--n-warmup", type=int, default=5)
     parser.add_argument("--output", type=str, default="")
+    add_swa_args(parser)
     args = parser.parse_args()
+    print_swa_status(args.swa, args.window if args.swa == "on" else None)
 
     device = "cuda"
     all_results = []

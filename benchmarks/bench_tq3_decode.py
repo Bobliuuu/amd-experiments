@@ -60,6 +60,13 @@ except Exception:
     compress_kv_for_triton = None
     turboquant_attention_fwd = None
 
+from cache_utils import (
+    add_swa_args,
+    print_swa_status,
+    resolve_swa_window,
+    truncate_kv_to_window,
+)
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Helpers
@@ -152,6 +159,7 @@ def bench_fp16_decode(
     n_decode: int = 30,
     n_runs: int = 3,
     batch_size: int = 1,
+    swa_window: int | None = None,
 ) -> Dict:
     model.eval()
     torch.cuda.reset_peak_memory_stats()
@@ -166,6 +174,8 @@ def bench_fp16_decode(
 
     cache = prefill_out.past_key_values
     fp16_kv_bytes = kv_memory_bytes_from_cache(cache)
+    if swa_window is not None:
+        truncate_kv_to_window(cache, swa_window)
     del prefill_out
     torch.cuda.empty_cache()
 
@@ -184,6 +194,8 @@ def bench_fp16_decode(
             with torch.no_grad():
                 out = model(next_token, past_key_values=cache, use_cache=True)
             cache = out.past_key_values
+            if swa_window is not None:
+                truncate_kv_to_window(cache, swa_window)
             next_token = out.logits[:, -1:, :].argmax(dim=-1)
         torch.cuda.synchronize()
         times.append(time.perf_counter() - t0)
@@ -206,6 +218,7 @@ def bench_fp16_decode(
         "ratio_observed_runtime": 1.0,
         "n_decode":         n_decode,
         "n_runs":           n_runs,
+        "swa_window":       swa_window,
     }
 
 
@@ -221,6 +234,7 @@ def bench_tq_decode(
     n_decode: int = 30,
     n_runs: int = 3,
     batch_size: int = 1,
+    swa_window: int | None = None,
 ) -> Dict:
     """
     Benchmark TQ KV cache decode.
@@ -254,6 +268,10 @@ def bench_tq_decode(
     cache = prefill_out.past_key_values
     fp16_bytes = kv_memory_bytes_from_cache(cache)
 
+    # SWA: truncate prefill cache to window before measuring tq_bytes / round-trip
+    if swa_window is not None:
+        truncate_kv_to_window(cache, swa_window)
+
     # Measure TQ compressed size from one representative layer
     sample_k = cache.layers[0].keys  # (1, n_kv_heads, seq_len, head_dim)
     n_vecs_per_layer = sample_k.numel() // sample_k.shape[-1]
@@ -286,6 +304,8 @@ def bench_tq_decode(
             with torch.no_grad():
                 out = model(next_token, past_key_values=cache, use_cache=True)
             cache = out.past_key_values
+            if swa_window is not None:
+                truncate_kv_to_window(cache, swa_window)
             # Simulate TQ storage: compress + decompress the updated cache in-place
             apply_kv_roundtrip(cache, tq_roundtrip)
             next_token = out.logits[:, -1:, :].argmax(dim=-1)
@@ -322,6 +342,7 @@ def bench_tq_decode(
         "tokens_target": int(n_decode * batch_size),
         "n_decode":         n_decode,
         "n_runs":           n_runs,
+        "swa_window":       swa_window,
     }
 
 
@@ -332,6 +353,7 @@ def bench_tq_fused_decode_step(
     n_decode: int = 30,
     n_runs: int = 3,
     batch_size: int = 1,
+    swa_window: int | None = None,
 ) -> Dict:
     """
     Benchmark fused Triton attention on a persistent compressed KV cache.
@@ -359,6 +381,10 @@ def bench_tq_fused_decode_step(
 
     cache = prefill_out.past_key_values
     fp16_bytes = kv_memory_bytes_from_cache(cache)
+
+    # SWA: truncate prefill cache to window before building persistent compressed cache
+    if swa_window is not None:
+        truncate_kv_to_window(cache, swa_window)
 
     # Build a persistent compressed cache from prefill KV.
     layer0 = cache.layers[0]
@@ -412,6 +438,7 @@ def bench_tq_fused_decode_step(
         "path": "fused_triton_decode_step",
         "n_decode": n_decode,
         "n_runs": n_runs,
+        "swa_window": swa_window,
     }
 
 
@@ -472,6 +499,7 @@ def main():
         "--pretty-summary", action="store_true",
         help="Print screenshot-style summary blocks with actual runtime values."
     )
+    add_swa_args(parser)
     args = parser.parse_args()
 
     print("=== TQ KV Cache End-to-End Decode Benchmark ===")
@@ -498,6 +526,9 @@ def main():
     n_params = sum(p.numel() for p in model.parameters()) / 1e9
     print(f"Model:    {n_params:.1f}B params, dtype={next(model.parameters()).dtype}")
 
+    effective_window = resolve_swa_window(args.swa, model, args.window)
+    print_swa_status(args.swa, effective_window)
+
     # Pre-build TQ engines for each bit width
     tq_engines = {}
     for bits in args.bits:
@@ -509,6 +540,8 @@ def main():
         "model":      args.model,
         "device":     torch.cuda.get_device_name(0),
         "batch_size": args.batch_size,
+        "swa":        args.swa,
+        "swa_window": effective_window,
         "results":    [],
     }
 
@@ -525,7 +558,8 @@ def main():
             try:
                 r = bench_fp16_decode(model, tokenizer, seq_len,
                                       n_decode=args.n_decode, n_runs=args.n_runs,
-                                      batch_size=args.batch_size)
+                                      batch_size=args.batch_size,
+                                      swa_window=effective_window)
                 all_results["results"].append(r)
                 print(f"{seq_len:>8} | {'fp16':>6} | {args.batch_size:>5} | "
                       f"{r['tokens_per_sec']:>9.1f} | "
@@ -551,7 +585,8 @@ def main():
                 r = bench_tq_decode(model, tokenizer, tq, seq_len,
                                     bits=bits,
                                     n_decode=args.n_decode, n_runs=args.n_runs,
-                                    batch_size=args.batch_size)
+                                    batch_size=args.batch_size,
+                                    swa_window=effective_window)
                 all_results["results"].append(r)
                 print(f"{seq_len:>8} | {r['mode']:>6} | {args.batch_size:>5} | "
                       f"{r['tokens_per_sec']:>9.1f} | "
@@ -575,6 +610,7 @@ def main():
                 r = bench_tq_fused_decode_step(
                     model, tokenizer, tq, seq_len,
                     n_decode=args.n_decode, n_runs=args.n_runs, batch_size=args.batch_size,
+                    swa_window=effective_window,
                 )
                 all_results["results"].append(r)
                 print(f"{seq_len:>8} | {r['mode']:>6} | {args.batch_size:>5} | "

@@ -22,6 +22,9 @@ ROOT = Path(__file__).resolve().parents[1]
 RESULTS = ROOT / "results"
 INSTALL_SCRIPT = ROOT / "scripts" / "install_turboquant_vllm_backend.sh"
 
+sys.path.insert(0, str(ROOT / "kernels"))
+from cache_utils import add_swa_args, print_swa_status, vllm_swa_warn  # noqa: E402
+
 
 def _default_python() -> Path:
     v = ROOT / ".venv" / "bin" / "python3"
@@ -90,6 +93,8 @@ def _run_smoke(py: Path, model: str, max_model_len: int) -> dict:
         "--max-model-len",
         str(max_model_len),
         "--enforce-eager",
+        "--swa",
+        "off",
         "--output",
         str(RESULTS / "_story2_gate_smoke.json"),
     ]
@@ -126,7 +131,10 @@ def main() -> None:
         action="store_true",
         help="Only record vLLM import path; do not load LLM (no GPU required).",
     )
+    add_swa_args(p)
     args = p.parse_args()
+    print_swa_status(args.swa, args.window if args.swa == "on" else None)
+    vllm_swa_warn(args.swa, args.max_model_len)
 
     # Do not Path.resolve() the venv interpreter: it often symlinks to /usr/bin/python3
     # and the child would lose venv site-packages (vllm would appear missing).

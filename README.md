@@ -146,6 +146,40 @@ pure-PyTorch path; the rotation GEMM routes through
 - `attn_implementation="eager"` — OOM at seq ≥ 32K (quadratic activations: 137 GB)
 - `flash_attention_2` — requires `flash-attn` package (not installed on this system)
 
+## Sliding Window Attention (SWA) mode
+
+By default benchmarks store the full KV cache (`DynamicCache`), so the sliding-window mask only zeroes far-away contributions while memory traffic remains O(seq). To exercise an actually windowed cache, every model-loading and synthetic bench takes:
+
+- `--swa {on,off}` (default `off` — preserves prior behavior)
+- `--window N` (default `0`; with `--swa on` falls back to `model.config.sliding_window` for HF benches; required for synthetic benches that don't load a model)
+
+Helpers live in **`kernels/cache_utils.py`** (`truncate_kv_to_window`, `clamp_seq_to_window`, `resolve_swa_window`).
+
+Examples:
+
+```bash
+# HF baseline at long context, windowed cache (Mistral-7B reads window=4096 from config)
+python3 baselines/fp16_baseline.py --model mistralai/Mistral-7B-v0.1 --seq-lens 32768 --swa on
+
+# Synthetic decode bench, explicit window
+python3 benchmarks/bench_all_methods_decode.py --seq-lens 32768 --swa on --window 4096
+
+# Memory-only sanity: confirm cache shrinks
+python3 benchmarks/bench_measured_cache_memory.py --seq-len 32768 --swa off  # ~134 MB FP16
+python3 benchmarks/bench_measured_cache_memory.py --seq-len 32768 --swa on   # ~16 MB FP16
+```
+
+**vLLM benches:** the flag is recorded for provenance but the actual SWA path is owned by vLLM. On Mistral, vLLM upstream disables the custom paged-attention path whenever `sliding_window != 0`. To exercise the optimized path under SWA, apply the patch first:
+
+```bash
+"$REPO/.benchmark_mi300_vllm_frozen/.venv/bin/python" \
+    scripts/patch_vllm_rocm_sliding_window_custom_paged.py
+```
+
+Then run any `bench_vllm_*.py` with `--swa on --max-model-len 16384` (must exceed the window for SWA to fire).
+
+**NIAH under SWA:** `bench_niah.py --swa on` pushes the needle into the last `window − 256` tokens so the model can actually attend to it; without that adjustment, NIAH at ctx > window is broken by design.
+
 ## One-command Showcase
 
 To run all screenshot-style experiments (measured compression grid + attention quality + latency table + roofline + KV memory charts) in one go:
