@@ -1,18 +1,27 @@
 #!/usr/bin/env python3
 """
-Validate GQA fused TQ3 decode vs decompress+SDPA (vLLM-style backend, no full vLLM).
+Validate GQA fused TQ3 decode against decompress+SDPA (golden) and the
+expand+MHA fused path (existing).
 
-Fills a paged TQ3 kv_cache from FP16 K/V, then compares:
-  TurboQuantROCmAttentionImpl._forward_decode_fused
-  TurboQuantROCmAttentionImpl._forward_decode_decompress
+Three paths compared, all on the same paged TQ3 kv_cache:
+  1. decompress+SDPA      — TurboQuantROCmAttentionImpl._forward_decode_decompress
+  2. expand+MHA fused     — _forward_decode_fused with VLLM_TQ_USE_GQA_KERNEL=0
+  3. GQA fused (new)      — _forward_decode_fused with VLLM_TQ_USE_GQA_KERNEL=1
+
+Cosine similarity targets:
+  cos(expand_fused, decompress) ≥ 0.92  (existing fused path against golden)
+  cos(gqa_fused,    decompress) ≥ 0.92  (new GQA path against golden)
+  cos(gqa_fused,    expand_fused) ≥ 0.99  (same compressed bytes, just better
+                                          access pattern; any drift is reduce-order
+                                          floating-point noise)
 
 Run from repo root with kernels on PYTHONPATH:
-
   PYTHONPATH=./kernels:. python3 benchmarks/validate_tq_gqa_fused_decode.py
 """
 
 from __future__ import annotations
 
+import argparse
 import os
 import sys
 from pathlib import Path
@@ -23,8 +32,6 @@ sys.path.insert(0, str(ROOT))
 
 import torch
 
-os.environ["VLLM_TQ_USE_FUSED_KERNEL"] = "1"
-
 from tq_backends.attention.backends.rocm_flash_attn import (  # noqa: E402
     TurboQuantROCmAttentionImpl,
     TurboQuantROCmAttentionMetadata,
@@ -32,46 +39,45 @@ from tq_backends.attention.backends.rocm_flash_attn import (  # noqa: E402
 )
 
 
-def _fill_paged_tq_cache(
-    kv_cache: torch.Tensor,
-    k_hist: torch.Tensor,
-    v_hist: torch.Tensor,
-    tq,
-) -> None:
-    """k_hist, v_hist: (seq_len, num_kv_heads, D) fp16 — write via TQ3 store."""
-    seq_len, num_kv, D = k_hist.shape
-    block_size = kv_cache.shape[3]
+def _fill_paged_tq_cache(kv_cache, k_hist, v_hist, tq) -> None:
+    seq_len = k_hist.shape[0]
     slot_mapping = torch.arange(seq_len, device=kv_cache.device, dtype=torch.int64)
     tq3_store_tokens(kv_cache, k_hist, v_hist, slot_mapping, tq)
 
 
-def main() -> None:
-    device = "cuda"
+def _cos(a: torch.Tensor, b: torch.Tensor) -> float:
+    return torch.nn.functional.cosine_similarity(
+        a.flatten().float().unsqueeze(0),
+        b.flatten().float().unsqueeze(0),
+    ).item()
+
+
+def _max_abs(a: torch.Tensor, b: torch.Tensor) -> float:
+    return (a.float() - b.float()).abs().max().item()
+
+
+def _run_one(num_q: int, num_kv: int, seq_len: int, device: str = "cuda") -> dict:
     torch.manual_seed(0)
-
-    num_q_heads, num_kv_heads = 32, 8
     head_dim = 128
-    gqa_ratio = num_q_heads // num_kv_heads
-    assert gqa_ratio == 4
+    gqa_ratio = num_q // num_kv
+    assert num_q == num_kv * gqa_ratio
 
-    seq_len = 2048
     block_size = 16
     n_blocks_needed = (seq_len + block_size - 1) // block_size
     num_blocks_pool = max(n_blocks_needed + 2, 8)
 
     kv_cache = torch.zeros(
-        2, num_blocks_pool, num_kv_heads, block_size, 52,
-        dtype=torch.uint8,
-        device=device,
+        2, num_blocks_pool, num_kv, block_size, 52,
+        dtype=torch.uint8, device=device,
     )
-    k_hist = torch.randn(seq_len, num_kv_heads, head_dim, device=device, dtype=torch.float16)
-    v_hist = torch.randn(seq_len, num_kv_heads, head_dim, device=device, dtype=torch.float16)
+    k_hist = torch.randn(seq_len, num_kv, head_dim, device=device, dtype=torch.float16)
+    v_hist = torch.randn(seq_len, num_kv, head_dim, device=device, dtype=torch.float16)
 
     impl = TurboQuantROCmAttentionImpl(
-        num_heads=num_q_heads,
+        num_heads=num_q,
         head_size=head_dim,
-        scale=head_dim**-0.5,
-        num_kv_heads=num_kv_heads,
+        scale=head_dim ** -0.5,
+        num_kv_heads=num_kv,
         alibi_slopes=None,
         sliding_window=None,
         kv_cache_dtype="tq3",
@@ -94,27 +100,77 @@ def main() -> None:
         max_decode_seq_len=seq_len,
     )
 
-    q = torch.randn(1, num_q_heads, head_dim, device=device, dtype=torch.float16)
+    q = torch.randn(1, num_q, head_dim, device=device, dtype=torch.float16)
 
     with torch.no_grad():
-        out_fused = impl._forward_decode_fused(q, kv_cache, meta)
         out_dec = impl._forward_decode_decompress(q, kv_cache, meta)
 
-    cos = torch.nn.functional.cosine_similarity(
-        out_fused.flatten().float().unsqueeze(0),
-        out_dec.flatten().float().unsqueeze(0),
-    ).item()
-    max_abs = (out_fused.float() - out_dec.float()).abs().max().item()
-    print(f"seq_len={seq_len} num_q={num_q_heads} num_kv={num_kv_heads} gqa_ratio={gqa_ratio}")
-    print(f"cosine_sim(fused, decompress_sdpa)={cos:.6f}  max_abs_err={max_abs:.6f}")
-    if cos < 0.92:
-        print("FAIL: cosine similarity below 0.92")
-        sys.exit(1)
-    print("PASS")
+        os.environ["VLLM_TQ_USE_FUSED_KERNEL"] = "1"
+        os.environ["VLLM_TQ_USE_GQA_KERNEL"]   = "0"
+        out_expand = impl._forward_decode_fused(q, kv_cache, meta)
+
+        os.environ["VLLM_TQ_USE_GQA_KERNEL"] = "1"
+        out_gqa = impl._forward_decode_fused(q, kv_cache, meta)
+
+    return {
+        "num_q": num_q, "num_kv": num_kv, "gqa_ratio": gqa_ratio, "seq_len": seq_len,
+        "cos_expand_vs_dec":   _cos(out_expand, out_dec),
+        "cos_gqa_vs_dec":      _cos(out_gqa,    out_dec),
+        "cos_gqa_vs_expand":   _cos(out_gqa,    out_expand),
+        "maxabs_gqa_vs_dec":      _max_abs(out_gqa,    out_dec),
+        "maxabs_gqa_vs_expand":   _max_abs(out_gqa,    out_expand),
+    }
 
 
-if __name__ == "__main__":
+def main() -> None:
+    p = argparse.ArgumentParser()
+    p.add_argument("--num-q",    type=int, default=None)
+    p.add_argument("--num-kv",   type=int, default=None)
+    p.add_argument("--seq-len",  type=int, default=None)
+    p.add_argument(
+        "--cos-floor", type=float, default=0.92,
+        help="Min cosine sim vs decompress+SDPA (default 0.92).",
+    )
+    p.add_argument(
+        "--cos-floor-gqa-vs-expand", type=float, default=0.99,
+        help="Min cosine sim between GQA fused and expand+MHA fused (default 0.99).",
+    )
+    args = p.parse_args()
+
     if not torch.cuda.is_available():
         print("no cuda")
         sys.exit(0)
+
+    if args.num_q is not None and args.num_kv is not None and args.seq_len is not None:
+        cases = [(args.num_q, args.num_kv, args.seq_len)]
+    else:
+        head_configs = [(32, 32), (32, 16), (32, 8), (64, 8)]
+        seq_lens = [1024, 8192, 65536]
+        cases = [(q, kv, s) for (q, kv) in head_configs for s in seq_lens]
+
+    fails = 0
+    for num_q, num_kv, seq_len in cases:
+        r = _run_one(num_q, num_kv, seq_len)
+        ok_expand = r["cos_expand_vs_dec"] >= args.cos_floor
+        ok_gqa    = r["cos_gqa_vs_dec"]    >= args.cos_floor
+        ok_drift  = r["cos_gqa_vs_expand"] >= args.cos_floor_gqa_vs_expand
+        verdict = "PASS" if (ok_expand and ok_gqa and ok_drift) else "FAIL"
+        if verdict == "FAIL":
+            fails += 1
+        print(
+            f"{verdict}  num_q={r['num_q']:>3} num_kv={r['num_kv']:>3} "
+            f"gqa={r['gqa_ratio']} seq={r['seq_len']:>6}  "
+            f"cos(expand,dec)={r['cos_expand_vs_dec']:.4f}  "
+            f"cos(gqa,dec)={r['cos_gqa_vs_dec']:.4f}  "
+            f"cos(gqa,expand)={r['cos_gqa_vs_expand']:.6f}  "
+            f"maxabs(gqa,dec)={r['maxabs_gqa_vs_dec']:.4f}"
+        )
+
+    if fails:
+        print(f"\n{fails}/{len(cases)} cases FAILED")
+        sys.exit(1)
+    print(f"\nALL {len(cases)} cases PASS")
+
+
+if __name__ == "__main__":
     main()

@@ -80,6 +80,11 @@ def _use_fused_kernel() -> bool:
     return os.environ.get("VLLM_TQ_USE_FUSED_KERNEL", "0") == "1"
 
 
+def _use_gqa_kernel() -> bool:
+    """Runtime A/B toggle for the GQA-aware kernel (decode, gqa_ratio>1)."""
+    return os.environ.get("VLLM_TQ_USE_GQA_KERNEL", "0") == "1"
+
+
 def _debug_once(key: str, message: str) -> None:
     if not _DEBUG_PATHS:
         return
@@ -126,6 +131,7 @@ def _run_sdpa(
 
 _TQ_ENGINE: Optional[Any] = None
 _TRITON_ATTN_FWD: Optional[Any] = None
+_TRITON_GQA_FWD: Optional[Any] = None
 
 
 def _get_tq_engine(device: str = "cuda") -> Any:
@@ -159,6 +165,18 @@ def _get_triton_fwd() -> Any:
         except ImportError:
             _TRITON_ATTN_FWD = False   # sentinel: import attempted but failed
     return _TRITON_ATTN_FWD if _TRITON_ATTN_FWD is not False else None
+
+
+def _get_triton_gqa_fwd() -> Any:
+    """Return turboquant_gqa_attention_fwd (lazy import, None if unavailable)."""
+    global _TRITON_GQA_FWD
+    if _TRITON_GQA_FWD is None:
+        try:
+            from tq_triton import turboquant_gqa_attention_fwd
+            _TRITON_GQA_FWD = turboquant_gqa_attention_fwd
+        except ImportError:
+            _TRITON_GQA_FWD = False
+    return _TRITON_GQA_FWD if _TRITON_GQA_FWD is not False else None
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -657,6 +675,39 @@ class TurboQuantROCmAttentionImpl:
                 "block_tables for fused decode."
             )
 
+        if batch_size == 0:
+            return query
+
+        k_planes, k_norms, v_planes, v_norms = tq3_gather_for_triton_batch(
+            kv_cache, block_tables, [int(x) for x in seq_lens]
+        )
+
+        if self.gqa_ratio > 1 and _use_gqa_kernel():
+            gqa_fwd = _get_triton_gqa_fwd()
+            if gqa_fwd is not None:
+                _debug_once(
+                    "decode_gqa_fused",
+                    f"Decode path=GQA fused Triton (gqa_ratio={self.gqa_ratio})",
+                )
+                _log_tq_dispatch(
+                    "[TQ_DISPATCH] path=GQA_FUSED "
+                    f"num_q={self.num_heads} num_kv={self.num_kv_heads} gqa_ratio={self.gqa_ratio} "
+                    f"batch_decode={batch_size} seq_lens={seq_lens!r}"
+                )
+                q_rot = tq.rotate_queries(query.float()).unsqueeze(2)
+                out = gqa_fwd(
+                    q_rot,
+                    k_planes.to(device),
+                    k_norms.to(device),
+                    v_planes.to(device),
+                    v_norms.to(device),
+                    gqa_ratio=self.gqa_ratio,
+                    rotation=tq.rotation,
+                    sm_scale=self.scale,
+                    use_split_k=True,
+                )
+                return out.squeeze(2)
+
         _debug_once(
             "decode_fused",
             f"Decode path=fused Triton (gqa_ratio={self.gqa_ratio})",
@@ -665,11 +716,6 @@ class TurboQuantROCmAttentionImpl:
             "[TQ_DISPATCH] path=FUSED_TRITON "
             f"num_q={self.num_heads} num_kv={self.num_kv_heads} gqa_ratio={self.gqa_ratio} "
             f"batch_decode={batch_size} seq_lens={seq_lens!r}"
-        )
-        if batch_size == 0:
-            return query
-        k_planes, k_norms, v_planes, v_norms = tq3_gather_for_triton_batch(
-            kv_cache, block_tables, [int(x) for x in seq_lens]
         )
         if self.gqa_ratio > 1:
             k_planes, k_norms, v_planes, v_norms = expand_tq_compressed_for_gqa(
