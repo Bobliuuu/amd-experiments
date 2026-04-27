@@ -1253,6 +1253,402 @@ def compress_kv_nibble(
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# GQA-aware kernel: index KV by H_kv, fan out to gqa_ratio Q heads inside the tile
+#
+# Q is (B, H_q, S_q, D); K/V are (B, H_kv, S_k, 48) with H_q = H_kv * gqa_ratio.
+# Each program handles one (B, H_kv) pair and a tile of BLOCK_M rows drawn from
+# the gqa_ratio * S_q rows that share that KV head — K is loaded once per
+# BLOCK_N and reused across all gqa_ratio Q heads in the group, dropping HBM
+# traffic by gqa_ratio× vs the expand+MHA path.
+#
+# M-mapping: m_off = pid_m * BLOCK_M + arange(BLOCK_M)
+#            s_q_off  = m_off // gqa_ratio   (which query position)
+#            g_off    = m_off %  gqa_ratio   (which Q in group)
+#            q_head   = head_kv_idx * gqa_ratio + g_off
+# ──────────────────────────────────────────────────────────────────────────────
+
+@triton.autotune(
+    configs=[
+        triton.Config({"BLOCK_M":  4, "BLOCK_N":  64}, num_warps=2, num_stages=2),
+        triton.Config({"BLOCK_M":  4, "BLOCK_N": 128}, num_warps=4, num_stages=2),
+        triton.Config({"BLOCK_M":  8, "BLOCK_N":  64}, num_warps=2, num_stages=2),
+        triton.Config({"BLOCK_M":  8, "BLOCK_N": 128}, num_warps=4, num_stages=2),
+        triton.Config({"BLOCK_M": 16, "BLOCK_N":  64}, num_warps=4, num_stages=2),
+        triton.Config({"BLOCK_M": 16, "BLOCK_N": 128}, num_warps=4, num_stages=2),
+        triton.Config({"BLOCK_M": 32, "BLOCK_N":  64}, num_warps=4, num_stages=2),
+    ],
+    key=["seq_q", "seq_k", "head_dim", "gqa_ratio"],
+)
+@triton.jit
+def _tq3_gqa_attention_kernel(
+    Q_ptr, stride_qb, stride_qh, stride_qm, stride_qd,
+    K_planes_ptr, stride_kb, stride_kh, stride_kn,
+    K_norms_ptr, stride_knb, stride_knh, stride_knn,
+    V_planes_ptr, stride_vb, stride_vh, stride_vn,
+    V_norms_ptr, stride_vnb, stride_vnh, stride_vnn,
+    O_ptr, stride_ob, stride_oh, stride_om, stride_od,
+    batch: int, h_kv: int, seq_q: int, seq_k: int,
+    head_dim: tl.constexpr,
+    gqa_ratio: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+    sm_scale: float,
+):
+    pid_m  = tl.program_id(0)
+    pid_bh = tl.program_id(1)
+    batch_idx   = pid_bh // h_kv
+    head_kv_idx = pid_bh %  h_kv
+
+    m_off    = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
+    M_total  = gqa_ratio * seq_q
+    m_mask   = m_off < M_total
+    g_off    = m_off % gqa_ratio
+    s_q_off  = m_off // gqa_ratio
+    q_head   = head_kv_idx * gqa_ratio + g_off
+
+    q_ptrs = (Q_ptr
+              + batch_idx * stride_qb
+              + q_head[:, None] * stride_qh
+              + s_q_off[:, None] * stride_qm
+              + tl.arange(0, head_dim)[None, :] * stride_qd)
+    q = tl.load(q_ptrs, mask=m_mask[:, None], other=0.0).to(tl.float16)
+
+    m_i = tl.full([BLOCK_M], -float("inf"), dtype=tl.float32)
+    l_i = tl.zeros([BLOCK_M], dtype=tl.float32)
+    acc  = tl.zeros([BLOCK_M, head_dim], dtype=tl.float32)
+
+    k_base  = batch_idx * stride_kb  + head_kv_idx * stride_kh
+    kn_base = batch_idx * stride_knb + head_kv_idx * stride_knh
+    v_base  = batch_idx * stride_vb  + head_kv_idx * stride_vh
+    vn_base = batch_idx * stride_vnb + head_kv_idx * stride_vnh
+
+    n_range = tl.arange(0, BLOCK_N)
+    d_range = tl.arange(0, head_dim)
+    byte_in_plane = d_range // 8
+    bit_in_byte   = d_range % 8
+    bit_shift     = bit_in_byte[None, :]
+
+    for block_n_start in range(0, seq_k, BLOCK_N):
+        n_mask    = (block_n_start + n_range) < seq_k
+        n_mask_2d = n_mask[:, None]
+
+        k_block_base = K_planes_ptr + k_base + block_n_start * stride_kn
+        k_byte_ptrs  = (k_block_base
+                        + n_range[:, None] * stride_kn
+                        + byte_in_plane[None, :])
+        b0k_raw = tl.load(k_byte_ptrs,      mask=n_mask_2d, other=0).to(tl.int32)
+        b1k_raw = tl.load(k_byte_ptrs + 16, mask=n_mask_2d, other=0).to(tl.int32)
+        b2k_raw = tl.load(k_byte_ptrs + 32, mask=n_mask_2d, other=0).to(tl.int32)
+        b0k = (b0k_raw >> bit_shift) & 1
+        b1k = (b1k_raw >> bit_shift) & 1
+        b2k = (b2k_raw >> bit_shift) & 1
+        k_centroids = _bits_to_centroid(b0k, b1k, b2k)
+
+        raw_scores = tl.dot(q, k_centroids.to(tl.float16).T, out_dtype=tl.float32)
+
+        k_norms_block = tl.load(
+            K_norms_ptr + kn_base + (block_n_start + n_range) * stride_knn,
+            mask=n_mask, other=0.0)
+        scores = raw_scores * (k_norms_block * sm_scale)[None, :]
+        scores = tl.where(n_mask[None, :], scores, -1e9)
+
+        m_ij  = tl.max(scores, axis=1)
+        m_new = tl.maximum(m_i, m_ij)
+        alpha = tl.exp(m_i - m_new)
+        p     = tl.exp(scores - m_new[:, None])
+        l_i   = l_i * alpha + tl.sum(p, axis=1)
+        m_i   = m_new
+
+        v_block_base = V_planes_ptr + v_base + block_n_start * stride_vn
+        v_byte_ptrs  = (v_block_base
+                        + n_range[:, None] * stride_vn
+                        + byte_in_plane[None, :])
+        b0v_raw = tl.load(v_byte_ptrs,      mask=n_mask_2d, other=0).to(tl.int32)
+        b1v_raw = tl.load(v_byte_ptrs + 16, mask=n_mask_2d, other=0).to(tl.int32)
+        b2v_raw = tl.load(v_byte_ptrs + 32, mask=n_mask_2d, other=0).to(tl.int32)
+        b0v = (b0v_raw >> bit_shift) & 1
+        b1v = (b1v_raw >> bit_shift) & 1
+        b2v = (b2v_raw >> bit_shift) & 1
+        v_centroids = _bits_to_centroid(b0v, b1v, b2v)
+
+        v_norms_block = tl.load(
+            V_norms_ptr + vn_base + (block_n_start + n_range) * stride_vnn,
+            mask=n_mask, other=0.0)
+        p_scaled = p * v_norms_block[None, :]
+        acc = acc * alpha[:, None] + tl.dot(p_scaled.to(tl.float16),
+                                            v_centroids.to(tl.float16),
+                                            out_dtype=tl.float32)
+
+    l_safe = tl.where(l_i > 0, l_i, 1.0)
+    acc = acc / l_safe[:, None]
+
+    o_ptrs = (O_ptr
+              + batch_idx * stride_ob
+              + q_head[:, None] * stride_oh
+              + s_q_off[:, None] * stride_om
+              + tl.arange(0, head_dim)[None, :] * stride_od)
+    tl.store(o_ptrs, acc.to(tl.float16), mask=m_mask[:, None])
+
+
+@triton.jit
+def _tq3_gqa_splitk_partial_kernel(
+    Q_ptr, stride_qb, stride_qh, stride_qm, stride_qd,
+    K_planes_ptr, stride_kb, stride_kh, stride_kn,
+    K_norms_ptr, stride_knb, stride_knh, stride_knn,
+    V_planes_ptr, stride_vb, stride_vh, stride_vn,
+    V_norms_ptr, stride_vnb, stride_vnh, stride_vnn,
+    Partial_m_ptr,   stride_pmb, stride_pmh, stride_pmm, stride_pms,
+    Partial_l_ptr,   stride_plb, stride_plh, stride_plm, stride_pls,
+    Partial_acc_ptr, stride_pab, stride_pah, stride_pam, stride_pas, stride_pae, stride_pad,
+    batch: int, h_kv: int, seq_q: int, seq_k: int,
+    head_dim: tl.constexpr,
+    gqa_ratio: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+    BLOCK_KV: tl.constexpr,
+    sm_scale: float,
+):
+    """
+    GQA Split-K partial. Grid: (cdiv(gqa_ratio*S_q, BLOCK_M), B*H_kv, n_splits).
+    Partial layout: (B, H_kv, M_tiles, n_splits, BLOCK_M[, D]) — reduce in PyTorch
+    then permute to (B, H_q, S_q, D).
+    """
+    pid_m     = tl.program_id(0)
+    pid_bh    = tl.program_id(1)
+    pid_split = tl.program_id(2)
+    batch_idx   = pid_bh // h_kv
+    head_kv_idx = pid_bh %  h_kv
+
+    m_off    = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
+    M_total  = gqa_ratio * seq_q
+    m_mask   = m_off < M_total
+    g_off    = m_off % gqa_ratio
+    s_q_off  = m_off // gqa_ratio
+    q_head   = head_kv_idx * gqa_ratio + g_off
+
+    q_ptrs = (Q_ptr
+              + batch_idx * stride_qb
+              + q_head[:, None] * stride_qh
+              + s_q_off[:, None] * stride_qm
+              + tl.arange(0, head_dim)[None, :] * stride_qd)
+    q = tl.load(q_ptrs, mask=m_mask[:, None], other=0.0).to(tl.float16)
+
+    m_i = tl.full([BLOCK_M], -float("inf"), dtype=tl.float32)
+    l_i = tl.zeros([BLOCK_M], dtype=tl.float32)
+    acc  = tl.zeros([BLOCK_M, head_dim], dtype=tl.float32)
+
+    k_base  = batch_idx * stride_kb  + head_kv_idx * stride_kh
+    kn_base = batch_idx * stride_knb + head_kv_idx * stride_knh
+    v_base  = batch_idx * stride_vb  + head_kv_idx * stride_vh
+    vn_base = batch_idx * stride_vnb + head_kv_idx * stride_vnh
+
+    n_range = tl.arange(0, BLOCK_N)
+    d_range = tl.arange(0, head_dim)
+    byte_in_plane = d_range // 8
+    bit_in_byte   = d_range % 8
+    bit_shift     = bit_in_byte[None, :]
+
+    split_start = pid_split * BLOCK_KV
+    split_end   = tl.minimum(split_start + BLOCK_KV, seq_k)
+    for rel_n in range(0, BLOCK_KV, BLOCK_N):
+        block_n_start = split_start + rel_n
+        n_mask    = (block_n_start + n_range) < split_end
+        n_mask_2d = n_mask[:, None]
+
+        k_block_base = K_planes_ptr + k_base + block_n_start * stride_kn
+        k_byte_ptrs  = (k_block_base
+                        + n_range[:, None] * stride_kn
+                        + byte_in_plane[None, :])
+        b0k_raw = tl.load(k_byte_ptrs,      mask=n_mask_2d, other=0).to(tl.int32)
+        b1k_raw = tl.load(k_byte_ptrs + 16, mask=n_mask_2d, other=0).to(tl.int32)
+        b2k_raw = tl.load(k_byte_ptrs + 32, mask=n_mask_2d, other=0).to(tl.int32)
+        b0k = (b0k_raw >> bit_shift) & 1
+        b1k = (b1k_raw >> bit_shift) & 1
+        b2k = (b2k_raw >> bit_shift) & 1
+        k_centroids = _bits_to_centroid(b0k, b1k, b2k)
+
+        raw_scores = tl.dot(q, k_centroids.to(tl.float16).T, out_dtype=tl.float32)
+        k_norms_block = tl.load(
+            K_norms_ptr + kn_base + (block_n_start + n_range) * stride_knn,
+            mask=n_mask, other=0.0)
+        scores = raw_scores * (k_norms_block * sm_scale)[None, :]
+        scores = tl.where(n_mask[None, :], scores, -1e9)
+
+        m_ij  = tl.max(scores, axis=1)
+        m_new = tl.maximum(m_i, m_ij)
+        alpha = tl.exp(m_i - m_new)
+        p     = tl.exp(scores - m_new[:, None])
+        l_i   = l_i * alpha + tl.sum(p, axis=1)
+        m_i   = m_new
+
+        v_block_base = V_planes_ptr + v_base + block_n_start * stride_vn
+        v_byte_ptrs  = (v_block_base
+                        + n_range[:, None] * stride_vn
+                        + byte_in_plane[None, :])
+        b0v_raw = tl.load(v_byte_ptrs,      mask=n_mask_2d, other=0).to(tl.int32)
+        b1v_raw = tl.load(v_byte_ptrs + 16, mask=n_mask_2d, other=0).to(tl.int32)
+        b2v_raw = tl.load(v_byte_ptrs + 32, mask=n_mask_2d, other=0).to(tl.int32)
+        b0v = (b0v_raw >> bit_shift) & 1
+        b1v = (b1v_raw >> bit_shift) & 1
+        b2v = (b2v_raw >> bit_shift) & 1
+        v_centroids = _bits_to_centroid(b0v, b1v, b2v)
+
+        v_norms_block = tl.load(
+            V_norms_ptr + vn_base + (block_n_start + n_range) * stride_vnn,
+            mask=n_mask, other=0.0)
+        p_scaled = p * v_norms_block[None, :]
+        acc = acc * alpha[:, None] + tl.dot(p_scaled.to(tl.float16),
+                                            v_centroids.to(tl.float16),
+                                            out_dtype=tl.float32)
+
+    m_ptr = (Partial_m_ptr
+             + batch_idx * stride_pmb
+             + head_kv_idx * stride_pmh
+             + pid_m * stride_pmm
+             + pid_split * stride_pms)
+    l_ptr = (Partial_l_ptr
+             + batch_idx * stride_plb
+             + head_kv_idx * stride_plh
+             + pid_m * stride_plm
+             + pid_split * stride_pls)
+    tl.store(m_ptr + tl.arange(0, BLOCK_M), m_i, mask=m_mask)
+    tl.store(l_ptr + tl.arange(0, BLOCK_M), l_i, mask=m_mask)
+
+    acc_ptrs = (Partial_acc_ptr
+                + batch_idx * stride_pab
+                + head_kv_idx * stride_pah
+                + pid_m * stride_pam
+                + pid_split * stride_pas
+                + tl.arange(0, BLOCK_M)[:, None] * stride_pae
+                + tl.arange(0, head_dim)[None, :] * stride_pad)
+    tl.store(acc_ptrs, acc, mask=m_mask[:, None])
+
+
+def turboquant_gqa_attention_fwd(
+    q: torch.Tensor,
+    k_planes: torch.Tensor,
+    k_norms: torch.Tensor,
+    v_planes: torch.Tensor,
+    v_norms: torch.Tensor,
+    gqa_ratio: int,
+    rotation: Optional[torch.Tensor] = None,
+    sm_scale: Optional[float] = None,
+    use_split_k: bool = True,
+) -> torch.Tensor:
+    """
+    GQA-aware fused TQ3 dequantize + attention.
+
+    Q is (B, H_q, S_q, D); K/V planes are (B, H_kv, S_k, 48) with H_q = H_kv * gqa_ratio.
+    The kernel reads each KV head once and fans out across the gqa_ratio Q heads
+    in its group — vs the expand+MHA path which duplicates compressed bytes
+    gqa_ratio× along the head axis.
+
+    gqa_ratio == 1 forwards to turboquant_attention_fwd (the MHA-tuned kernel),
+    so this is a strict superset.
+    """
+    B, H_q, S_q, D = q.shape
+    _, H_kv, S_k, _ = k_planes.shape
+
+    assert D == 128, f"Only head_dim=128 supported, got {D}"
+    assert H_q == H_kv * gqa_ratio, (
+        f"H_q ({H_q}) must equal H_kv ({H_kv}) * gqa_ratio ({gqa_ratio})"
+    )
+    assert k_planes.shape[-1] == 48
+    assert k_planes.dtype == torch.uint8
+    assert k_norms.dtype == torch.float32
+
+    if gqa_ratio == 1:
+        return turboquant_attention_fwd(
+            q, k_planes, k_norms, v_planes, v_norms,
+            rotation=rotation, sm_scale=sm_scale, use_split_k=use_split_k,
+        )
+
+    if sm_scale is None:
+        sm_scale = float(D ** -0.5)
+
+    q        = q.contiguous()
+    k_planes = k_planes.contiguous()
+    k_norms  = k_norms.contiguous()
+    v_planes = v_planes.contiguous()
+    v_norms  = v_norms.contiguous()
+
+    out = torch.empty(B, H_q, S_q, D, dtype=torch.float16, device=q.device)
+    M_total = gqa_ratio * S_q
+    use_splitk_path = use_split_k and S_q <= 16 and S_k >= 4096
+
+    if use_splitk_path:
+        split_block_n = 64
+        split_block_m = max(gqa_ratio, 4)
+        split_kv = max(2048, split_block_n)
+        n_splits = triton.cdiv(S_k, split_kv)
+        m_tiles  = triton.cdiv(M_total, split_block_m)
+
+        partial_m = torch.empty(
+            (B, H_kv, m_tiles, n_splits, split_block_m),
+            dtype=torch.float32, device=q.device,
+        )
+        partial_l = torch.empty_like(partial_m)
+        partial_acc = torch.empty(
+            (B, H_kv, m_tiles, n_splits, split_block_m, D),
+            dtype=torch.float32, device=q.device,
+        )
+
+        grid_partial = (m_tiles, B * H_kv, n_splits)
+        _tq3_gqa_splitk_partial_kernel[grid_partial](
+            q, q.stride(0), q.stride(1), q.stride(2), q.stride(3),
+            k_planes, k_planes.stride(0), k_planes.stride(1), k_planes.stride(2),
+            k_norms,  k_norms.stride(0),  k_norms.stride(1),  k_norms.stride(2),
+            v_planes, v_planes.stride(0), v_planes.stride(1), v_planes.stride(2),
+            v_norms,  v_norms.stride(0),  v_norms.stride(1),  v_norms.stride(2),
+            partial_m,   partial_m.stride(0),   partial_m.stride(1),   partial_m.stride(2),   partial_m.stride(3),
+            partial_l,   partial_l.stride(0),   partial_l.stride(1),   partial_l.stride(2),   partial_l.stride(3),
+            partial_acc, partial_acc.stride(0), partial_acc.stride(1), partial_acc.stride(2), partial_acc.stride(3), partial_acc.stride(4), partial_acc.stride(5),
+            B, H_kv, S_q, S_k,
+            head_dim=D,
+            gqa_ratio=gqa_ratio,
+            BLOCK_M=split_block_m,
+            BLOCK_N=split_block_n,
+            BLOCK_KV=split_kv,
+            sm_scale=sm_scale,
+        )
+
+        # Stable softmax merge across the n_splits axis (dim=3).
+        m = partial_m.max(dim=3).values
+        w = torch.exp(partial_m - m.unsqueeze(3))
+        l = (w * partial_l).sum(dim=3)
+        acc = (w.unsqueeze(-1) * partial_acc).sum(dim=3)
+        out_blocks = (acc / l.clamp_min(1e-12).unsqueeze(-1)).to(torch.float16)
+        # (B, H_kv, m_tiles, BLOCK_M, D) -> (B, H_kv, m_tiles*BLOCK_M, D), trim, then
+        # reshape to (B, H_kv, S_q, gqa_ratio, D) — m flat layout is s_q*gqa_ratio + g.
+        out_flat = out_blocks.reshape(B, H_kv, m_tiles * split_block_m, D)[:, :, :M_total, :]
+        out_5d = out_flat.reshape(B, H_kv, S_q, gqa_ratio, D)
+        # Permute to (B, H_kv, gqa_ratio, S_q, D) so merging dims 1,2 yields q_head = h_kv*ratio + g.
+        out.copy_(out_5d.permute(0, 1, 3, 2, 4).reshape(B, H_q, S_q, D))
+    else:
+        def grid_fn(meta):
+            return (triton.cdiv(M_total, meta["BLOCK_M"]), B * H_kv)
+        _tq3_gqa_attention_kernel[grid_fn](
+            q, q.stride(0), q.stride(1), q.stride(2), q.stride(3),
+            k_planes, k_planes.stride(0), k_planes.stride(1), k_planes.stride(2),
+            k_norms,  k_norms.stride(0),  k_norms.stride(1),  k_norms.stride(2),
+            v_planes, v_planes.stride(0), v_planes.stride(1), v_planes.stride(2),
+            v_norms,  v_norms.stride(0),  v_norms.stride(1),  v_norms.stride(2),
+            out,      out.stride(0),      out.stride(1),       out.stride(2),       out.stride(3),
+            B, H_kv, S_q, S_k,
+            head_dim=D,
+            gqa_ratio=gqa_ratio,
+            sm_scale=sm_scale,
+        )
+
+    if rotation is not None:
+        R = rotation.to(q.device).float()
+        n_q = B * H_q * S_q
+        out = (out.float().reshape(n_q, D) @ R).reshape(B, H_q, S_q, D).half()
+
+    return out
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Self-test: verify output, then benchmark throughput
 # ──────────────────────────────────────────────────────────────────────────────
 

@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
 """
-Benchmark GQA decode: fused (compressed head expand + Triton) vs decompress+SDPA.
+Benchmark GQA decode: three paths on the same paged TQ3 cache.
 
-Uses the same synthetic paged cache as validate_tq_gqa_fused_decode.py.
-Prints median ms per forward over `reps` after warmup.
+  decompress_ms  : decompress to fp16, expand for GQA, SDPA
+  expand_ms      : compressed cache, expand_tq_compressed_for_gqa, MHA Triton kernel
+  gqa_ms         : compressed cache, GQA-aware Triton kernel (no expand)
+
+Reports median ms per forward over `reps` after warmup, plus speedups
+vs decompress baseline and vs expand+MHA fused (the meaningful comparison
+for the GQA-structure win).
 
   PYTHONPATH=./kernels:. python3 benchmarks/bench_tq_gqa_decode_paths.py --seq-len 8192
 """
@@ -44,26 +49,22 @@ def _bench_one(seq_len: int, warmup: int, reps: int) -> dict:
     n_blocks = (seq_len + block_size - 1) // block_size
     num_blocks_pool = max(n_blocks + 4, 16)
 
-    kv_f = torch.zeros(
-        2, num_blocks_pool, num_kv_heads, block_size, 52, dtype=torch.uint8, device=device
-    )
-    kv_d = kv_f.clone()
+    kv_dec    = torch.zeros(2, num_blocks_pool, num_kv_heads, block_size, 52,
+                            dtype=torch.uint8, device=device)
+    kv_expand = kv_dec.clone()
+    kv_gqa    = kv_dec.clone()
 
     k_hist = torch.randn(seq_len, num_kv_heads, head_dim, device=device, dtype=torch.float16)
     v_hist = torch.randn(seq_len, num_kv_heads, head_dim, device=device, dtype=torch.float16)
 
     impl = TurboQuantROCmAttentionImpl(
-        num_heads=num_q_heads,
-        head_size=head_dim,
-        scale=head_dim**-0.5,
-        num_kv_heads=num_kv_heads,
-        alibi_slopes=None,
-        sliding_window=None,
+        num_heads=num_q_heads, head_size=head_dim, scale=head_dim ** -0.5,
+        num_kv_heads=num_kv_heads, alibi_slopes=None, sliding_window=None,
         kv_cache_dtype="tq3",
     )
     tq = impl._tq(device)
-    fill_cache(kv_f, k_hist, v_hist, tq)
-    fill_cache(kv_d, k_hist, v_hist, tq)
+    for cache in (kv_dec, kv_expand, kv_gqa):
+        fill_cache(cache, k_hist, v_hist, tq)
 
     bt = torch.zeros(num_blocks_pool, dtype=torch.int32, device=device)
     for b in range(n_blocks):
@@ -81,14 +82,23 @@ def _bench_one(seq_len: int, warmup: int, reps: int) -> dict:
     q = torch.randn(1, num_q_heads, head_dim, device=device, dtype=torch.float16)
 
     os.environ["VLLM_TQ_USE_FUSED_KERNEL"] = "1"
-    ms_fused = bench_ms(lambda: impl._forward_decode_fused(q, kv_f, meta), warmup, reps)
+    os.environ["VLLM_TQ_USE_GQA_KERNEL"]   = "0"
+    ms_expand = bench_ms(lambda: impl._forward_decode_fused(q, kv_expand, meta), warmup, reps)
+
+    os.environ["VLLM_TQ_USE_GQA_KERNEL"] = "1"
+    ms_gqa = bench_ms(lambda: impl._forward_decode_fused(q, kv_gqa, meta), warmup, reps)
+
     os.environ["VLLM_TQ_USE_FUSED_KERNEL"] = "0"
-    ms_dec = bench_ms(lambda: impl._forward_decode_decompress(q, kv_d, meta), warmup, reps)
+    os.environ["VLLM_TQ_USE_GQA_KERNEL"]   = "0"
+    ms_dec = bench_ms(lambda: impl._forward_decode_decompress(q, kv_dec, meta), warmup, reps)
+
     return {
         "seq_len": seq_len,
-        "fused_ms": round(ms_fused, 4),
-        "decompress_ms": round(ms_dec, 4),
-        "speedup": round(ms_dec / ms_fused, 3),
+        "decompress_ms":  round(ms_dec,    4),
+        "expand_ms":      round(ms_expand, 4),
+        "gqa_ms":         round(ms_gqa,    4),
+        "speedup_vs_decompress": round(ms_dec    / ms_gqa, 3),
+        "speedup_vs_expand":     round(ms_expand / ms_gqa, 3),
     }
 
 
@@ -109,16 +119,12 @@ def main() -> None:
     p.add_argument("--warmup", type=int, default=5)
     p.add_argument("--reps", type=int, default=20)
     p.add_argument(
-        "--sweep",
-        type=str,
-        default="",
+        "--sweep", type=str, default="",
         help="Comma-separated seq_lens; if set, runs sweep and writes --json-out",
     )
     p.add_argument(
-        "--json-out",
-        type=str,
-        default="",
-        help="Write results/bench_tq_gqa_decode_sweep.json (use with --sweep)",
+        "--json-out", type=str, default="",
+        help="Write results/<name>.json (use with --sweep)",
     )
     args = p.parse_args()
 
@@ -133,28 +139,33 @@ def main() -> None:
             row = _bench_one(seq_len, args.warmup, args.reps)
             rows.append(row)
             print(
-                f"seq_len={seq_len}  fused_ms={row['fused_ms']:.3f}  "
-                f"decompress_ms={row['decompress_ms']:.3f}  speedup={row['speedup']:.2f}x"
+                f"seq_len={seq_len:>6}  "
+                f"decompress={row['decompress_ms']:7.3f} ms  "
+                f"expand={row['expand_ms']:7.3f} ms  "
+                f"gqa={row['gqa_ms']:7.3f} ms  "
+                f"vs_dec={row['speedup_vs_decompress']:.2f}x  "
+                f"vs_expand={row['speedup_vs_expand']:.2f}x"
             )
         if args.json_out:
             outp = Path(args.json_out)
             if not outp.is_absolute():
                 outp = ROOT / "results" / outp.name
             outp.parent.mkdir(parents=True, exist_ok=True)
-            outp.write_text(
-                json.dumps(
-                    {"device": torch.cuda.get_device_name(0), "rows": rows},
-                    indent=2,
-                )
-            )
+            outp.write_text(json.dumps(
+                {"device": torch.cuda.get_device_name(0), "rows": rows},
+                indent=2,
+            ))
             print(f"Wrote {outp}")
         return
 
     row = _bench_one(args.seq_len, args.warmup, args.reps)
     print(
         f"seq_len={row['seq_len']}  GQA 32/8  "
-        f"fused_ms={row['fused_ms']:.3f}  decompress_sdpa_ms={row['decompress_ms']:.3f}  "
-        f"speedup={row['speedup']:.2f}x"
+        f"decompress={row['decompress_ms']:.3f} ms  "
+        f"expand={row['expand_ms']:.3f} ms  "
+        f"gqa={row['gqa_ms']:.3f} ms  "
+        f"vs_decompress={row['speedup_vs_decompress']:.2f}x  "
+        f"vs_expand={row['speedup_vs_expand']:.2f}x"
     )
 
 
