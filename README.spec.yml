@@ -17,6 +17,8 @@ badges:
   - {label: compression, message: "{{ n.ratio.text }} at 3 bits", color: 3ddc97}
   - {label: model, message: "Mistral-7B-v0.1", color: 27c8e8}
   - {label: kernels, message: "Triton · HIP · ROCm 7.2", color: f2c14e}
+  - {label: release, message: v0.1.0, color: 27c8e8, logo: github, link: "https://github.com/Bobliuuu/amd-experiments/releases/tag/v0.1.0"}
+  - {label: Hugging Face, message: "results dataset", color: ffd21e, logo: huggingface, link: "https://huggingface.co/datasets/Bobliu/amd-experiments"}
   - {label: python, message: "3.10+", color: 3776ab, logo: python}
 nav:
   - {emoji: "🎬", label: Video, anchor: video}

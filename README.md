@@ -6,7 +6,7 @@
 
 **KV-cache compression on AMD Instinct MI300X: TurboQuant, IsoQuant, PlanarQuant and RotorQuant with Triton/ROCm kernels**
 
-![AMD: Instinct MI300X · gfx942](https://img.shields.io/badge/AMD-Instinct%20MI300X%20%C2%B7%20gfx942-ed1c24?logo=amd&logoColor=white) ![compression: 4.92x at 3 bits](https://img.shields.io/badge/compression-4.92x%20at%203%20bits-3ddc97) ![model: Mistral-7B-v0.1](https://img.shields.io/badge/model-Mistral--7B--v0.1-27c8e8) ![kernels: Triton · HIP · ROCm 7.2](https://img.shields.io/badge/kernels-Triton%20%C2%B7%20HIP%20%C2%B7%20ROCm%207.2-f2c14e) ![python: 3.10+](https://img.shields.io/badge/python-3.10%2B-3776ab?logo=python&logoColor=white)
+![AMD: Instinct MI300X · gfx942](https://img.shields.io/badge/AMD-Instinct%20MI300X%20%C2%B7%20gfx942-ed1c24?logo=amd&logoColor=white) ![compression: 4.92x at 3 bits](https://img.shields.io/badge/compression-4.92x%20at%203%20bits-3ddc97) ![model: Mistral-7B-v0.1](https://img.shields.io/badge/model-Mistral--7B--v0.1-27c8e8) ![kernels: Triton · HIP · ROCm 7.2](https://img.shields.io/badge/kernels-Triton%20%C2%B7%20HIP%20%C2%B7%20ROCm%207.2-f2c14e) [![release: v0.1.0](https://img.shields.io/badge/release-v0.1.0-27c8e8?logo=github&logoColor=white)](https://github.com/Bobliuuu/amd-experiments/releases/tag/v0.1.0) [![Hugging Face: results dataset](https://img.shields.io/badge/Hugging%20Face-results%20dataset-ffd21e?logo=huggingface&logoColor=white)](https://huggingface.co/datasets/Bobliu/amd-experiments) ![python: 3.10+](https://img.shields.io/badge/python-3.10%2B-3776ab?logo=python&logoColor=white)
 
 [🎬 Video](#video) · [📊 Results](#results) · [🧩 How it works](#how-it-works) · [🚀 Quick start](#quick-start) · [⚠️ Limitations](#caveats) · [🗺️ Repo map](#repo-map)
 
