@@ -1,0 +1,266 @@
+# Spec for ~/video-readme-maker:  python3 ~/video-readme-maker/vrm.py all README.spec.yml
+# Numbers come from results/*.json via tools/readme_data.py (results/derived/readme_data.json).
+project:
+  name: amd-experiments
+  emoji: "🔥"
+  tagline: "KV-cache compression on AMD Instinct MI300X: TurboQuant, IsoQuant, PlanarQuant and RotorQuant with Triton/ROCm kernels"
+  repo: Bobliuuu/amd-experiments
+hero:
+  title: amd-experiments
+  subtitle: "four-way KV-cache compression benchmark on MI300X (gfx942)"
+  chips: [MI300X, Triton, ROCm, 3-bit KV cache]
+theme: {accent: "#ed1c24", accent2: "#27c8e8", accent3: "#f2c14e", good: "#3ddc97"}
+readme_out: README.md
+assets_dir: assets
+badges:
+  - {label: AMD, message: "Instinct MI300X · gfx942", color: ed1c24, logo: amd}
+  - {label: compression, message: "{{ n.ratio.text }} at 3 bits", color: 3ddc97}
+  - {label: model, message: "Mistral-7B-v0.1", color: 27c8e8}
+  - {label: kernels, message: "Triton · HIP · ROCm 7.2", color: f2c14e}
+  - {label: python, message: "3.10+", color: 3776ab, logo: python}
+nav:
+  - {emoji: "🎬", label: Video, anchor: video}
+  - {emoji: "📊", label: Results, anchor: results}
+  - {emoji: "🧩", label: How it works, anchor: how-it-works}
+  - {emoji: "🚀", label: Quick start, anchor: quick-start}
+  - {emoji: "⚠️", label: Limitations, anchor: caveats}
+  - {emoji: "🗺️", label: Repo map, anchor: repo-map}
+
+numbers:
+  ratio: {file: results/derived/readme_data.json, path: compression, fmt: "{:.2f}", unit: "x"}
+  turbo_c: {file: results/derived/readme_data.json, path: turbo_compress, fmt: "{:.1f}", unit: " GB/s"}
+  iso_c: {file: results/derived/readme_data.json, path: iso_compress, fmt: "{:.1f}", unit: " GB/s"}
+  turbo_p: {file: results/derived/readme_data.json, path: turbo_prefill, fmt: "{:.0f}", unit: "K tok/s"}
+  planar_p: {file: results/derived/readme_data.json, path: planar_prefill, fmt: "{:,.0f}", unit: "K tok/s"}
+  pre_x: {file: results/derived/readme_data.json, path: planar_prefill_x, fmt: "{:.1f}", unit: "x"}
+  fma_p: {file: results/derived/readme_data.json, path: planar_fmas}
+  fma_t: {file: results/derived/readme_data.json, path: turbo_fmas, fmt: "{:,.0f}"}
+  cos3: {file: results/derived/readme_data.json, path: cos_min, fmt: "{:.3f}"}
+  cos4: {file: results/derived/readme_data.json, path: cos4, fmt: "{:.3f}"}
+  tri32: {file: results/derived/readme_data.json, path: triton_32k, fmt: "{:.2f}", unit: "x"}
+  tri1: {file: results/derived/readme_data.json, path: triton_1k, fmt: "{:.2f}", unit: "x"}
+  tri_best: {file: results/derived/readme_data.json, path: triton_best, fmt: "{:.2f}", unit: "x"}
+  gqa_min: {file: results/derived/readme_data.json, path: gqa_min, fmt: "{:.1f}", unit: "x"}
+  gqa_max: {file: results/derived/readme_data.json, path: gqa_max, fmt: "{:.1f}", unit: "x"}
+  v_min: {file: results/derived/readme_data.json, path: vllm_min, fmt: "{:,.0f}"}
+  v_max: {file: results/derived/readme_data.json, path: vllm_max, fmt: "{:,.0f}"}
+  niah: {file: results/derived/readme_data.json, path: niah_min, fmt: "{:.0f}", unit: "%"}
+
+intro: |
+  <a id="video"></a>
+  A four-way benchmark of **TurboQuant**, **IsoQuant**, **PlanarQuant** and **RotorQuant** KV-cache compression on an **AMD Instinct MI300X** (gfx942, 192 GB HBM3),
+  with Triton/ROCm and HIP kernels, Mistral-7B-v0.1 shapes, compress/decompress bandwidth, prefill overhead, fused-attention decode and KV reconstruction quality.
+
+  All four 3-bit methods share the same 52-byte block layout, so they compress identically (**{{ n.ratio }}** versus fp16) and reconstruct with the same cosine similarity (about {{ n.cos3 }}).
+  They differ in **how fast they run**: the rotation is the cost. PlanarQuant uses {{ n.fma_p }} FMAs per vector, TurboQuant {{ n.fma_t }}.
+
+  > **Honest bottom line.** The compression itself is cheap and accurate, and a fused Triton TQ3 attention kernel beats fp16 SDPA at long context ({{ n.tri32 }} at 32K, B=1),
+  > but in vLLM serving of Mistral-7B **end-to-end output tokens per second do not change** ({{ n.v_min }} to {{ n.v_max }} tok/s for fp16, TQ decompress and TQ fused), because weights and MLP dominate the decode step.
+
+video:
+  url: ""
+  caption: "Explainer video (voice-over and subtitles): what was compared, what is faster, and where the gain stops"
+  mp4: video/amd_experiments_explainer.mp4
+  gif: video/preview.gif
+  srt: video/amd_experiments_explainer.srt
+  poster: video/poster.png
+  out_dir: video/.render
+  fps: 24
+  max_mb: 22
+  render_crf: 18
+  poster_at: 40
+  music: true
+  voice: {engine: openai, voice: alloy, model: gpt-4o-mini-tts, tempo: 1.2}
+  scenes:
+    - type: title
+      title: "KV-cache compression on MI300X"
+      subtitle: "TurboQuant, IsoQuant, PlanarQuant, RotorQuant"
+      chips: [AMD MI300X, Triton, ROCm, 3-bit KV]
+      say: "KV cache compression on the AMD Instinct MI300X. A four way benchmark of TurboQuant, IsoQuant, PlanarQuant and RotorQuant. This is a short tour of what we measured, and where the gains stop."
+    - type: problem
+      heading: "The problem"
+      bullets:
+        - "Long-context decode is limited by KV-cache memory"
+        - "3-bit compression shrinks the cache {{ n.ratio.text }}"
+        - "But rotations cost compute on every vector"
+        - "Which method is cheap enough to use on MI300X?"
+      say: "Long context decoding is limited by the size of the key value cache. Three bit compression shrinks it by {{ n.ratio.numtext }} times. But every method rotates each vector first, and that costs compute. Which one is cheap enough on the MI300X?"
+    - type: architecture
+      diagram: flow
+      heading: "The pipeline"
+      say: "A key or value head vector is rotated, quantised to three bits, and stored as a fifty two byte block. At decode time a fused kernel unpacks the block and runs attention in one pass."
+    - type: chart
+      chart: compress_bw
+      say: "Compression bandwidth, same data, same layout. IsoQuant packs at {{ n.iso_c.numtext }} gigabytes per second. TurboQuant manages only {{ n.turbo_c.numtext }}, because its rotation needs sixteen thousand multiply adds per vector."
+    - type: chart
+      chart: prefill
+      say: "That shows up in prefill compression throughput at thirty two thousand tokens. PlanarQuant reaches {{ n.planar_p.numtext }} thousand tokens per second against {{ n.turbo_p.numtext }} thousand for TurboQuant, which is {{ n.pre_x.numtext }} times faster."
+    - type: results
+      heading: "Same bytes, same quality"
+      items:
+        - {label: "compression vs fp16 (all four)", number: ratio}
+        - {label: "cosine similarity, 3-bit", number: cos3}
+        - {label: "cosine similarity, 4-bit", number: cos4}
+      say: "All four methods store {{ n.ratio.numtext }} times fewer bytes and reconstruct with cosine similarity around {{ n.cos3.numtext }} at three bits and {{ n.cos4.numtext }} at four bits. Needle in a haystack retrieval passes {{ n.niah.numtext }} percent on the synthetic test."
+    - type: chart
+      chart: triton
+      say: "A fused Triton attention kernel that reads the compressed cache directly is slower than fp16 at short contexts, only {{ n.tri1.numtext }} of fp16 speed at one K, but faster at long contexts: {{ n.tri32.numtext }} at thirty two K, and up to {{ n.tri_best.numtext }}. With grouped query attention, fused decode is {{ n.gqa_min.numtext }} to {{ n.gqa_max.numtext }} times faster than decompress then attend."
+    - type: chart
+      chart: vllm
+      say: "But in an end to end vLLM run of Mistral seven B, output throughput is flat, between {{ n.v_min.numtext }} and {{ n.v_max.numtext }} tokens per second, whether the cache is fp16, decompressed, or fused. Weights, the MLP and the framework dominate the step, so the KV format does not unlock decode speed in that setting."
+    - type: caveats
+      heading: "Honest caveats"
+      bullets:
+        - "One GPU model, one LLM family (Mistral-7B shapes)"
+        - "Needle test is synthetic; perplexity windows are small"
+        - "Serving result is one batch configuration"
+        - "Fused-kernel win depends on context length"
+      say: "Caveats. One GPU model, and Mistral seven B shapes. The needle test is synthetic and perplexity uses small windows. The serving result is a single batch configuration. And the fused kernel only wins at longer contexts."
+    - type: end
+      title: "amd-experiments"
+      subtitle: "Kernels, results and the full report are in the repo"
+      say: "Kernels, results, and the full report are in the repo."
+
+tables:
+  - id: methods_tbl
+    title: "Four methods at 3 bits on MI300X (4096 vectors, head_dim 128; prefill at 32K tokens)"
+    file: results/derived/readme_data.json
+    rows_path: methods
+    highlight: PlanarQuant
+    columns:
+      - {key: method, title: method}
+      - {key: compression, title: compression, align: right, fmt: "{:.2f}", unit: "x"}
+      - {key: fmas, title: FMAs / vector, align: right, fmt: "{:,.0f}"}
+      - {key: compress_gbs, title: compress GB/s, align: right, fmt: "{:.1f}"}
+      - {key: decompress_gbs, title: decompress GB/s, align: right, fmt: "{:.1f}"}
+      - {key: prefill_ktps, title: prefill K tok/s, align: right, fmt: "{:,.0f}"}
+      - {key: cosine, title: cosine (3-bit), align: right, fmt: "{:.4f}"}
+      - {key: cosine4, title: cosine (4-bit), align: right, fmt: "{:.4f}"}
+
+charts:
+  - id: compress_bw
+    type: bar
+    title: "Compress bandwidth at 3 bits (GB/s)"
+    subtitle: "MI300X, 4096 vectors of head_dim 128"
+    file: results/derived/readme_data.json
+    rows_path: methods
+    label: method
+    y: compress_gbs
+    fmt: "{:.1f}"
+    unit: " GB/s"
+    highlight: PlanarQuant
+  - id: prefill
+    type: bar
+    title: "Prefill KV-compression throughput at 32K tokens (K tok/s)"
+    subtitle: "Mistral-7B shapes: 32 layers, 8 KV heads, head_dim 128"
+    file: results/derived/readme_data.json
+    rows_path: methods
+    label: method
+    y: prefill_ktps
+    fmt: "{:,.0f}"
+    unit: "K"
+    highlight: PlanarQuant
+  - id: triton
+    type: line
+    title: "Fused Triton TQ3 attention: speedup over fp16 SDPA (>1 is faster)"
+    subtitle: "decode, B=1, 32 heads, head_dim 128, versus sequence length"
+    file: results/derived/readme_data.json
+    rows_path: triton_curve
+    x: seq_k
+    y: speedup
+    series: series
+    xlabel: "sequence length (tokens)"
+    ylabel: "speedup vs fp16"
+  - id: vllm
+    type: bar
+    title: "vLLM Mistral-7B output throughput (tok/s)"
+    subtitle: "1024 in / 256 out, 32 prompts: fp16 vs TurboQuant decompress vs TurboQuant fused"
+    file: results/derived/readme_data.json
+    rows_path: vllm
+    label: backend
+    y: tps
+    fmt: "{:,.0f}"
+
+diagrams:
+  - id: flow
+    title: "KV-cache compression pipeline on MI300X"
+    nodes:
+      - {id: kv, label: "K / V head vector", sub: "128 dims, fp16 (256 B)", col: 0, row: 0, kind: io}
+      - {id: rot, label: "rotation", sub: "WHT / planar / iso / rotor", col: 1, row: 0, kind: accent}
+      - {id: q, label: "3-bit quantise", sub: "Lloyd-Max codebook", col: 2, row: 0}
+      - {id: blk, label: "52-byte block", sub: "4.92x smaller", col: 3, row: 0, kind: store}
+      - {id: att, label: "fused dequant + attention", sub: "Triton, one pass", col: 3, row: 1}
+      - {id: out, label: "attention output", sub: "split-K reduce", col: 2, row: 1, kind: io}
+    edges:
+      - {from: kv, to: rot}
+      - {from: rot, to: q}
+      - {from: q, to: blk}
+      - {from: blk, to: att, label: "decode"}
+      - {from: att, to: out}
+
+sections:
+  - title: Results
+    emoji: "📊"
+    id: results
+    body: "MI300X VF (gfx942), Mistral-7B-v0.1 shapes. All numbers are read from `results/*.json` by `tools/readme_data.py`."
+    charts: [compress_bw, prefill]
+    tables: [methods_tbl]
+    after: |
+      The four 3-bit methods share an identical 52-byte block layout, so compression ({{ n.ratio }}) and reconstruction quality (cosine about {{ n.cos3 }}) match; what differs is speed.
+      **PlanarQuant** is the recommended method: fewest FMAs ({{ n.fma_p }} per vector against {{ n.fma_t }} for TurboQuant) and the fastest prefill compression ({{ n.pre_x }} faster than TurboQuant).
+      IsoQuant has the highest pack bandwidth ({{ n.iso_c }}); RotorQuant is not competitive with Iso or Planar on this hardware.
+  - title: Attention and serving
+    emoji: "⚡"
+    id: attention
+    body: "What the compressed cache buys at decode time."
+    charts: [triton, vllm]
+    after: |
+      The fused Triton TQ3 kernel is {{ n.tri1 }} of fp16 SDPA at 1K tokens and {{ n.tri32 }} at 32K (up to {{ n.tri_best }}). In a GQA fused-decode sweep it is {{ n.gqa_min }} to {{ n.gqa_max }} faster than decompress then SDPA.
+      In vLLM serving on Mistral-7B, output throughput is flat across fp16, TurboQuant decompress and TurboQuant fused ({{ n.v_min }} to {{ n.v_max }} tok/s): the KV format does not unlock end-to-end decode when weights, the MLP and the framework dominate.
+      Details and the closure analysis: [docs/repo_decode_bottleneck_closure.md](docs/repo_decode_bottleneck_closure.md), [report/final_report_v2.md](report/final_report_v2.md).
+  - title: How it works
+    emoji: "🧩"
+    id: how-it-works
+    body: |
+      Each K or V head vector (128 dims) is rotated, quantised to 3 bits and packed into a 52-byte block, **{{ n.ratio }}** smaller than fp16. The four methods differ only in the rotation:
+      TurboQuant's Walsh-Hadamard transform is the most expensive; PlanarQuant (2D Givens), IsoQuant (quaternion) and RotorQuant (Clifford rotor) are block rotations that are far cheaper.
+      Kernels: Triton/ROCm in `kernels/`, standalone HIP in `kernels/hip/` (9-test validation suite), MFMA-backed rotation, and a fused dequant-attention Triton kernel.
+    diagrams: [flow]
+    images:
+      - {src: report/figures_v2/fig23_kv_cache_compression_comparison.png, alt: "KV cache compression comparison on MI300X (report figure 23)", width: "85%"}
+  - title: Quick start
+    emoji: "🚀"
+    id: quick-start
+    body: |
+      Use the locked benchmark interpreter for GPU work (`docs/benchmark_mi300_locked_env.md`).
+
+      ```bash
+      python3 benchmarks/bench_compress_decompress.py --n-vectors 4096 --n-iters 50   # ~30 s
+      python3 benchmarks/bench_prefill.py --model mistralai/Mistral-7B-v0.1
+      python3 benchmarks/bench_batch_decode_v2.py --model mistralai/Mistral-7B-v0.1
+      python3 report/generate_figures_v2.py                                            # regenerate report figures
+      bash run_all_benchmarks.sh mistralai/Mistral-7B-v0.1                             # full suite, 60-90 min
+      python3 tools/readme_data.py && python3 ~/video-readme-maker/vrm.py all README.spec.yml   # this README and video
+      ```
+      HIP kernels: `cd kernels/hip && bash build_mi300x.sh` (build and run inside the ROCm 7.2 Primus container, see `docker_run_amd_mi300x.sh`).
+      The complete previous README (benchmark catalogue, SWA mode, ABI notes, reading order) is kept in [docs/ORIGINAL_README.md](docs/ORIGINAL_README.md).
+
+caveats:
+  - "**One GPU model, one model family.** Everything is MI300X (gfx942) with Mistral-7B-v0.1 shapes."
+  - "**NIAH is synthetic** ({{ n.niah }} pass on every 3-bit method) and perplexity runs use small windows."
+  - "**Serving is one configuration** (1024 in / 256 out, 32 prompts). Flat end-to-end throughput does not mean KV compression is useless at larger batch or longer context."
+  - "**Fused-kernel gains depend on context length**: at 4K tokens and below the fused TQ3 kernel is slower than fp16 SDPA."
+  - "**HIP kernels cannot be loaded via ctypes in the PyTorch process** (ROCm code-object ABI mismatch); standalone binaries are used instead."
+
+repo_map:
+  - {path: kernels/, desc: "Triton kernels, HIP/C++ implementation, MFMA loaders, reference implementations"}
+  - {path: benchmarks/, desc: "all benchmark scripts"}
+  - {path: baselines/, desc: "FP16 / FP8 / INT4 end-to-end decode baselines"}
+  - {path: results/, desc: "JSON outputs from all benchmark runs; results/derived is produced by tools/readme_data.py"}
+  - {path: report/, desc: "final_report_v2.md, figures and the figure generator"}
+  - {path: docs/, desc: "locked environment, closure analysis, previous README"}
+  - {path: tq_backends/, desc: "drop-in TurboQuant / IsoQuant attention modules for vLLM"}
+  - {path: tools/readme_data.py, desc: "derives README and video numbers from results/"}
+  - {path: README.spec.yml, desc: "spec for video-readme-maker"}
+  - {path: video/, desc: "explainer mp4, srt, poster, preview gif (generated)"}
+footer: "Generated with video-readme-maker from README.spec.yml and results/."

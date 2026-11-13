@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 324" width="980" height="324" role="img" aria-label="Compress bandwidth at 3 bits (GB/s)">
+<rect width="980" height="324" rx="16" fill="#0b0f17"/>
+<text x="32" y="44" font-family="ui-sans-serif,system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-weight="700" font-size="22" fill="#e6edf6">Compress bandwidth at 3 bits (GB/s)</text>
+<text x="32" y="68" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="14" fill="#8a98ad">MI300X, 4096 vectors of head_dim 128</text>
+<text x="162" y="118" text-anchor="end" font-family="ui-sans-serif,system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="15" fill="#8a98ad" font-weight="400">TurboQuant (TQ3)</text>
+<rect x="176" y="96" width="85.7" height="30" rx="6" fill="#263044"/>
+<text x="271.7" y="117" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="15" font-weight="700" fill="#e6edf6">2.9 GB/s</text>
+<text x="162" y="164" text-anchor="end" font-family="ui-sans-serif,system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="15" fill="#8a98ad" font-weight="400">IsoQuant</text>
+<rect x="176" y="142" width="654.0" height="30" rx="6" fill="#263044"/>
+<text x="840.0" y="163" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="15" font-weight="700" fill="#e6edf6">21.8 GB/s</text>
+<text x="162" y="210" text-anchor="end" font-family="ui-sans-serif,system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="15" fill="#e6edf6" font-weight="700">PlanarQuant</text>
+<rect x="176" y="188" width="562.3" height="30" rx="6" fill="#ed1c24"/>
+<text x="748.3" y="209" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="15" font-weight="700" fill="#e6edf6">18.7 GB/s</text>
+<text x="162" y="256" text-anchor="end" font-family="ui-sans-serif,system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="15" fill="#8a98ad" font-weight="400">RotorQuant</text>
+<rect x="176" y="234" width="519.0" height="30" rx="6" fill="#263044"/>
+<text x="705.0" y="255" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="15" font-weight="700" fill="#e6edf6">17.3 GB/s</text>
+<text x="948" y="310" text-anchor="end" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="12" fill="#8a98ad">source: results/derived/readme_data.json · higher is better</text>
+</svg>

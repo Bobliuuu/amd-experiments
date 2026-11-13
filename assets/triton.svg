@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 460" width="980" height="460" role="img" aria-label="Fused Triton TQ3 attention: speedup over fp16 SDPA (&gt;1 is faster)">
+<rect width="980" height="460" rx="16" fill="#0b0f17"/>
+<text x="32" y="44" font-family="ui-sans-serif,system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-weight="700" font-size="22" fill="#e6edf6">Fused Triton TQ3 attention: speedup over fp16 SDPA (&gt;1 is faster)</text>
+<text x="32" y="68" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="14" fill="#8a98ad">decode, B=1, 32 heads, head_dim 128, versus sequence length</text>
+<line x1="80" x2="940" y1="380" y2="380" stroke="#263044" stroke-width="1"/>
+<text x="70" y="384" text-anchor="end" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="12" fill="#8a98ad">0</text>
+<text x="80" y="400" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="12" fill="#8a98ad">1,024</text>
+<line x1="80" x2="940" y1="309" y2="309" stroke="#263044" stroke-width="1"/>
+<text x="70" y="313" text-anchor="end" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="12" fill="#8a98ad">0.5544</text>
+<text x="295" y="400" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="12" fill="#8a98ad">33,536</text>
+<line x1="80" x2="940" y1="238" y2="238" stroke="#263044" stroke-width="1"/>
+<text x="70" y="242" text-anchor="end" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="12" fill="#8a98ad">1.109</text>
+<text x="510" y="400" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="12" fill="#8a98ad">66,048</text>
+<line x1="80" x2="940" y1="167" y2="167" stroke="#263044" stroke-width="1"/>
+<text x="70" y="171" text-anchor="end" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="12" fill="#8a98ad">1.663</text>
+<text x="725" y="400" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="12" fill="#8a98ad">98,560</text>
+<line x1="80" x2="940" y1="96" y2="96" stroke="#263044" stroke-width="1"/>
+<text x="70" y="100" text-anchor="end" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="12" fill="#8a98ad">2.218</text>
+<text x="940" y="400" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="12" fill="#8a98ad">131,072</text>
+<text x="510.0" y="424" text-anchor="middle" font-family="ui-sans-serif,system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="13" fill="#8a98ad">sequence length (tokens)</text>
+<text x="14" y="238.0" transform="rotate(-90 14 238.0)" text-anchor="middle" font-family="ui-sans-serif,system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="13" fill="#8a98ad">speedup vs fp16</text>
+<polyline points="80.0,344.8 100.3,322.2 181.6,171.4 289.9,136.0 506.6,138.2 940.0,109.5" fill="none" stroke="#ed1c24" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="934" y="98" text-anchor="end" font-family="ui-sans-serif,system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="14" font-weight="700" fill="#ed1c24">fused TQ3 vs fp16 SDPA</text>
+<text x="948" y="446" text-anchor="end" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="12" fill="#8a98ad">source: results/derived/readme_data.json · higher is better</text>
+</svg>

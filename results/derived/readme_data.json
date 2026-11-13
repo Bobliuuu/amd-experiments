@@ -1,0 +1,112 @@
+{
+ "methods": [
+  {
+   "method": "TurboQuant (TQ3)",
+   "compression": 4.923076923076923,
+   "fmas": 16384,
+   "compress_gbs": 2.851429636794384,
+   "decompress_gbs": 4.440694479514401,
+   "prefill_ktps": 42.44067411092817,
+   "cosine": 0.9830539226531982,
+   "cosine4": 0.9953956604003906
+  },
+  {
+   "method": "IsoQuant",
+   "compression": 4.923076923076923,
+   "fmas": 512,
+   "compress_gbs": 21.769000340839625,
+   "decompress_gbs": 38.260055903025794,
+   "prefill_ktps": 891.5212272814339,
+   "cosine": 0.9828133583068848,
+   "cosine4": 0.9953715801239014
+  },
+  {
+   "method": "PlanarQuant",
+   "compression": 4.923076923076923,
+   "fmas": 256,
+   "compress_gbs": 18.71540465052986,
+   "decompress_gbs": 35.42734921187125,
+   "prefill_ktps": 1125.559052669145,
+   "cosine": 0.9830256700515747,
+   "cosine4": 0.9954087138175964
+  },
+  {
+   "method": "RotorQuant",
+   "compression": 4.923076923076923,
+   "fmas": 1176,
+   "compress_gbs": 17.2759559459793,
+   "decompress_gbs": 34.793237638359706,
+   "prefill_ktps": 855.1177012737298,
+   "cosine": 0.9832600355148315,
+   "cosine4": 0.9954171180725098
+  }
+ ],
+ "compression": 4.923076923076923,
+ "planar_prefill_x": 26.5207628353698,
+ "iso_compress": 21.769000340839625,
+ "turbo_compress": 2.851429636794384,
+ "planar_prefill": 1125.559052669145,
+ "turbo_prefill": 42.44067411092817,
+ "planar_fmas": 256,
+ "turbo_fmas": 16384,
+ "cos_min": 0.9828133583068848,
+ "cos_max": 0.9832600355148315,
+ "cos4": 0.9953715801239014,
+ "triton_curve": [
+  {
+   "seq_k": 1024,
+   "series": "fused TQ3 vs fp16 SDPA",
+   "speedup": 0.275
+  },
+  {
+   "seq_k": 4096,
+   "series": "fused TQ3 vs fp16 SDPA",
+   "speedup": 0.451
+  },
+  {
+   "seq_k": 16384,
+   "series": "fused TQ3 vs fp16 SDPA",
+   "speedup": 1.629
+  },
+  {
+   "seq_k": 32768,
+   "series": "fused TQ3 vs fp16 SDPA",
+   "speedup": 1.905
+  },
+  {
+   "seq_k": 65536,
+   "series": "fused TQ3 vs fp16 SDPA",
+   "speedup": 1.888
+  },
+  {
+   "seq_k": 131072,
+   "series": "fused TQ3 vs fp16 SDPA",
+   "speedup": 2.112
+  }
+ ],
+ "triton_best": 2.112,
+ "triton_worst": 0.275,
+ "triton_32k": 1.905,
+ "triton_1k": 0.275,
+ "gqa_min": 6.291,
+ "gqa_max": 7.484,
+ "vllm": [
+  {
+   "backend": "fp16",
+   "tps": 2425.3
+  },
+  {
+   "backend": "turboquant_decompress",
+   "tps": 2434.7
+  },
+  {
+   "backend": "turboquant_fused",
+   "tps": 2428.8
+  }
+ ],
+ "vllm_min": 2425.3,
+ "vllm_max": 2434.7,
+ "niah_min": 100.0,
+ "niah_trials": 20,
+ "niah_ctx_max": 65536
+}

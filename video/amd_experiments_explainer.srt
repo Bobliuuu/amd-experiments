@@ -1,0 +1,140 @@
+1
+00:00:00,400 --> 00:00:03,816
+KV cache compression on the AMD Instinct MI300X.
+
+2
+00:00:03,816 --> 00:00:09,011
+A four way benchmark of TurboQuant, IsoQuant, PlanarQuant and RotorQuant.
+
+3
+00:00:09,011 --> 00:00:13,779
+This is a short tour of what we measured, and where the gains stop.
+
+4
+00:00:14,780 --> 00:00:19,293
+Long context decoding is limited by the size of the key value cache.
+
+5
+00:00:19,293 --> 00:00:22,413
+Three bit compression shrinks it by 4.92 times.
+
+6
+00:00:22,413 --> 00:00:26,860
+But every method rotates each vector first, and that costs compute.
+
+7
+00:00:26,860 --> 00:00:29,515
+Which one is cheap enough on the MI300X?
+
+8
+00:00:30,510 --> 00:00:36,083
+A key or value head vector is rotated, quantised to three bits, and stored as a fifty two byte
+
+9
+00:00:36,083 --> 00:00:36,439
+block.
+
+10
+00:00:36,439 --> 00:00:41,123
+At decode time a fused kernel unpacks the block and runs attention in one pass.
+
+11
+00:00:42,120 --> 00:00:45,090
+Compression bandwidth, same data, same layout.
+
+12
+00:00:45,090 --> 00:00:47,932
+IsoQuant packs at 21.8 gigabytes per second.
+
+13
+00:00:47,932 --> 00:00:53,743
+TurboQuant manages only 2.9, because its rotation needs sixteen thousand multiply adds per
+
+14
+00:00:53,743 --> 00:00:54,195
+vector.
+
+15
+00:00:55,200 --> 00:01:01,044
+That shows up in prefill compression throughput at thirty two thousand tokens.
+
+16
+00:01:01,044 --> 00:01:08,087
+PlanarQuant reaches 1,126 thousand tokens per second against 42 thousand for TurboQuant, which
+
+17
+00:01:08,087 --> 00:01:09,660
+is 26.5 times faster.
+
+18
+00:01:10,660 --> 00:01:17,381
+All four methods store 4.92 times fewer bytes and reconstruct with cosine similarity around
+
+19
+00:01:17,381 --> 00:01:20,557
+0.983 at three bits and 0.995 at four bits.
+
+20
+00:01:20,557 --> 00:01:25,874
+Needle in a haystack retrieval passes 100 percent on the synthetic test.
+
+21
+00:01:26,870 --> 00:01:34,004
+A fused Triton attention kernel that reads the compressed cache directly is slower than fp16 at
+
+22
+00:01:34,004 --> 00:01:40,987
+short contexts, only 0.28 of fp16 speed at one K, but faster at long contexts: 1.91 at thirty
+
+23
+00:01:40,987 --> 00:01:42,639
+two K, and up to 2.11.
+
+24
+00:01:42,639 --> 00:01:49,398
+With grouped query attention, fused decode is 6.3 to 7.5 times faster than decompress then
+
+25
+00:01:49,398 --> 00:01:49,923
+attend.
+
+26
+00:01:50,920 --> 00:01:57,832
+But in an end to end vLLM run of Mistral seven B, output throughput is flat, between 2,425 and
+
+27
+00:01:57,832 --> 00:02:03,348
+2,435 tokens per second, whether the cache is fp16, decompressed, or fused.
+
+28
+00:02:03,348 --> 00:02:10,187
+Weights, the MLP and the framework dominate the step, so the KV format does not unlock decode
+
+29
+00:02:10,187 --> 00:02:11,804
+speed in that setting.
+
+30
+00:02:12,800 --> 00:02:13,321
+Caveats.
+
+31
+00:02:13,321 --> 00:02:16,059
+One GPU model, and Mistral seven B shapes.
+
+32
+00:02:16,059 --> 00:02:20,165
+The needle test is synthetic and perplexity uses small windows.
+
+33
+00:02:20,165 --> 00:02:23,488
+The serving result is a single batch configuration.
+
+34
+00:02:23,488 --> 00:02:26,747
+And the fused kernel only wins at longer contexts.
+
+35
+00:02:27,750 --> 00:02:31,285
+Kernels, results, and the full report are in the repo.
+

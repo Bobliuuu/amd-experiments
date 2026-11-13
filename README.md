@@ -1,230 +1,128 @@
-# AMD MI300X — KV Cache Compression Benchmark
+<div align="center">
 
-Four-way benchmark of **TurboQuant**, **IsoQuant**, **PlanarQuant**, and **RotorQuant** on AMD Instinct MI300X (gfx942). Triton/ROCm kernels, Mistral-7B-v0.1, compress/decompress bandwidth, prefill overhead, batch decode, and KV reconstruction quality.
+<img src="assets/hero.svg" alt="amd-experiments" width="100%">
 
-**Hardware**: MI300X VF · gfx942:sramecc+:xnack- · 192 GB HBM3  
-**Stack (benchmarks / vLLM):** locked **`uv`** venv at **`<repo>/.benchmark_mi300_vllm_frozen/`** — ROCm **7.2.0**, PyTorch **ROCm** line + **vLLM** `rocm721` pip stack (`stack_id` **`vllm_pip_rocm721_owned_torch`**). Exact commands, ACK env vars, archive snapshot, and reproducibility limits: **[`docs/benchmark_mi300_locked_env.md`](docs/benchmark_mi300_locked_env.md)**. Installer + gates: **[`docs/rocm72_uv_torch_vllm_venv.md`](docs/rocm72_uv_torch_vllm_venv.md)**. Primus Docker wrapper: **`docker_run_amd_mi300x.sh`**.
+# 🔥 amd-experiments
 
-## Key Results
+**KV-cache compression on AMD Instinct MI300X: TurboQuant, IsoQuant, PlanarQuant and RotorQuant with Triton/ROCm kernels**
 
-| Method | Compression | Prefill (32K tok/s) | Compress BW | Cosine sim |
-|---|---|---|---|---|
-| FP16 | 1× | — | — | 1.000 |
-| TurboQuant (TQ3) | 4.923× | 42K | 2.9 GB/s | 0.983 |
-| IsoQuant | 4.923× | 891K | **21.8 GB/s** | 0.983 |
-| **PlanarQuant** ★ | 4.923× | **1,126K** | 18.7 GB/s | 0.983 |
-| RotorQuant | 4.923× | 855K | 17.3 GB/s | 0.983 |
+![AMD: Instinct MI300X · gfx942](https://img.shields.io/badge/AMD-Instinct%20MI300X%20%C2%B7%20gfx942-ed1c24?logo=amd&logoColor=white) ![compression: 4.92x at 3 bits](https://img.shields.io/badge/compression-4.92x%20at%203%20bits-3ddc97) ![model: Mistral-7B-v0.1](https://img.shields.io/badge/model-Mistral--7B--v0.1-27c8e8) ![kernels: Triton · HIP · ROCm 7.2](https://img.shields.io/badge/kernels-Triton%20%C2%B7%20HIP%20%C2%B7%20ROCm%207.2-f2c14e) ![python: 3.10+](https://img.shields.io/badge/python-3.10%2B-3776ab?logo=python&logoColor=white)
 
-All 3-bit methods share identical 52-byte block layout and reconstruction quality. PlanarQuant is recommended: lowest FMA count (256 vs 16,384 for TurboQuant) and fastest prefill.
+[🎬 Video](#video) · [📊 Results](#results) · [🧩 How it works](#how-it-works) · [🚀 Quick start](#quick-start) · [⚠️ Limitations](#caveats) · [🗺️ Repo map](#repo-map)
 
-## Repository Structure
+</div>
 
-```
-amd-experiments/
-│
-├── kernels/                   Python wrappers and Triton kernels
-│   ├── turboquant_mi300x.py   TQ3/TQ4 compress/decompress (pure PyTorch, MFMA-backed)
-│   ├── block_quant_rocm.py    IsoQuant / PlanarQuant / RotorQuant (Triton, ROCm)
-│   ├── tq_triton.py           Fused TQ3 dequant-attention kernel (Flash Attn 2 style)
-│   ├── tq_hsaco_loader.py     HSACO loader (bypasses HIP ABI mismatch)
-│   ├── tq_mfma_loader.py      MFMA rotation kernel loader
-│   ├── hip/                   HIP/C++ implementation (standalone binaries)
-│   │   ├── turboquant_mi300x.hip.cpp   Quantize/dequantize/fused-dot kernels
-│   │   ├── turboquant_mi300x.h         Public C API + structs + codebooks
-│   │   ├── turboquant_mi300x_test.cpp  9-test validation suite
-│   │   ├── tq_hip_benchmark_mi300x.cpp Kernel microbenchmark binary
-│   │   ├── tq_mfma_rotate.hip.cpp      MFMA-accelerated rotation kernel
-│   │   └── build_mi300x.sh             Build script (lib / test / bench / clean)
-│   └── ref/                   Reference implementations (upstream / ggml)
-│       ├── ggml_turboquant.c/h  ggml-compatible TurboQuant reference
-│       └── turboquant.py        Python Lloyd-Max solver + codebook generator
-│
-├── benchmarks/                All benchmark scripts (see catalogue below)
-├── baselines/                 FP16 / FP8 / INT4 end-to-end decode baselines
-├── results/                   JSON outputs from all benchmark runs
-├── report/
-│   ├── final_report_v2.md     Full four-method analysis (current) + §14 repo closure / Figs 30–31
-│   ├── final_report.md        Earlier TQ3-only study + §14.5 closure summary
-│   ├── figures_v2/            v2 figures (incl. Figs 30–31 — rocprof buckets + deployment handoff)
-│   └── generate_figures_v2.py Matplotlib figure generator
-├── report-ui/                 React/Vite interactive report viewer
-├── analysis/                  Plot scripts for v1 results
-├── scripts/                   Consolidation and merge utilities
-├── profiling/                 rocprof counter collection
-├── tq_backends/               Drop-in TurboQuant / IsoQuant attention modules (not PyPI vLLM)
-└── notebooks/                 Jupyter analysis notebook
-```
+---
 
-## Quick Start
+**Explainer video (voice-over and subtitles): what was compared, what is faster, and where the gain stops**
 
-Use the **locked benchmark interpreter** when running GPU work (see **`docs/benchmark_mi300_locked_env.md`**):
+[![Explainer video preview (click for the mp4)](video/preview.gif)](video/amd_experiments_explainer.mp4)
+
+<a id="video"></a>
+A four-way benchmark of **TurboQuant**, **IsoQuant**, **PlanarQuant** and **RotorQuant** KV-cache compression on an **AMD Instinct MI300X** (gfx942, 192 GB HBM3),
+with Triton/ROCm and HIP kernels, Mistral-7B-v0.1 shapes, compress/decompress bandwidth, prefill overhead, fused-attention decode and KV reconstruction quality.
+
+All four 3-bit methods share the same 52-byte block layout, so they compress identically (**4.92x** versus fp16) and reconstruct with the same cosine similarity (about 0.983).
+They differ in **how fast they run**: the rotation is the cost. PlanarQuant uses 256 FMAs per vector, TurboQuant 16,384.
+
+> **Honest bottom line.** The compression itself is cheap and accurate, and a fused Triton TQ3 attention kernel beats fp16 SDPA at long context (1.91x at 32K, B=1),
+> but in vLLM serving of Mistral-7B **end-to-end output tokens per second do not change** (2,425 to 2,435 tok/s for fp16, TQ decompress and TQ fused), because weights and MLP dominate the decode step.
+
+<a id="results"></a>
+
+## 📊 Results
+
+MI300X VF (gfx942), Mistral-7B-v0.1 shapes. All numbers are read from `results/*.json` by `tools/readme_data.py`.
+
+**Four methods at 3 bits on MI300X (4096 vectors, head_dim 128; prefill at 32K tokens)**
+
+| method | compression | FMAs / vector | compress GB/s | decompress GB/s | prefill K tok/s | cosine (3-bit) | cosine (4-bit) |
+| :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| TurboQuant (TQ3) | 4.92x | 16,384 | 2.9 | 4.4 | 42 | 0.9831 | 0.9954 |
+| IsoQuant | 4.92x | 512 | 21.8 | 38.3 | 892 | 0.9828 | 0.9954 |
+| **PlanarQuant** | **4.92x** | **256** | **18.7** | **35.4** | **1,126** | **0.9830** | **0.9954** |
+| RotorQuant | 4.92x | 1,176 | 17.3 | 34.8 | 855 | 0.9833 | 0.9954 |
+
+<sub>Source: `results/derived/readme_data.json`</sub>
+
+<p align="center"><img src="assets/compress_bw.svg" alt="Compress bandwidth at 3 bits (GB/s)" width="100%"></p>
+
+<p align="center"><img src="assets/prefill.svg" alt="Prefill KV-compression throughput at 32K tokens (K tok/s)" width="100%"></p>
+
+The four 3-bit methods share an identical 52-byte block layout, so compression (4.92x) and reconstruction quality (cosine about 0.983) match; what differs is speed.
+**PlanarQuant** is the recommended method: fewest FMAs (256 per vector against 16,384 for TurboQuant) and the fastest prefill compression (26.5x faster than TurboQuant).
+IsoQuant has the highest pack bandwidth (21.8 GB/s); RotorQuant is not competitive with Iso or Planar on this hardware.
+
+<a id="attention"></a>
+
+## ⚡ Attention and serving
+
+What the compressed cache buys at decode time.
+
+<p align="center"><img src="assets/triton.svg" alt="Fused Triton TQ3 attention: speedup over fp16 SDPA (>1 is faster)" width="100%"></p>
+
+<p align="center"><img src="assets/vllm.svg" alt="vLLM Mistral-7B output throughput (tok/s)" width="100%"></p>
+
+The fused Triton TQ3 kernel is 0.28x of fp16 SDPA at 1K tokens and 1.91x at 32K (up to 2.11x). In a GQA fused-decode sweep it is 6.3x to 7.5x faster than decompress then SDPA.
+In vLLM serving on Mistral-7B, output throughput is flat across fp16, TurboQuant decompress and TurboQuant fused (2,425 to 2,435 tok/s): the KV format does not unlock end-to-end decode when weights, the MLP and the framework dominate.
+Details and the closure analysis: [docs/repo_decode_bottleneck_closure.md](docs/repo_decode_bottleneck_closure.md), [report/final_report_v2.md](report/final_report_v2.md).
+
+<a id="how-it-works"></a>
+
+## 🧩 How it works
+
+Each K or V head vector (128 dims) is rotated, quantised to 3 bits and packed into a 52-byte block, **4.92x** smaller than fp16. The four methods differ only in the rotation:
+TurboQuant's Walsh-Hadamard transform is the most expensive; PlanarQuant (2D Givens), IsoQuant (quaternion) and RotorQuant (Clifford rotor) are block rotations that are far cheaper.
+Kernels: Triton/ROCm in `kernels/`, standalone HIP in `kernels/hip/` (9-test validation suite), MFMA-backed rotation, and a fused dequant-attention Triton kernel.
+
+<p align="center"><img src="assets/flow.svg" alt="KV-cache compression pipeline on MI300X" width="100%"></p>
+
+<p align="center"><img src="report/figures_v2/fig23_kv_cache_compression_comparison.png" alt="KV cache compression comparison on MI300X (report figure 23)" width="85%"></p>
+
+<a id="quick-start"></a>
+
+## 🚀 Quick start
+
+Use the locked benchmark interpreter for GPU work (`docs/benchmark_mi300_locked_env.md`).
 
 ```bash
-# Example: after `source <repo>/.benchmark_mi300_vllm_frozen/.venv/bin/activate`
-# Compress/decompress microbench (§4 of the report — ~30 seconds)
-python3 benchmarks/bench_compress_decompress.py --n-vectors 4096 --n-iters 50
-
-# Prefill throughput: verify 26.5× gap between PlanarQuant and TurboQuant
+python3 benchmarks/bench_compress_decompress.py --n-vectors 4096 --n-iters 50   # ~30 s
 python3 benchmarks/bench_prefill.py --model mistralai/Mistral-7B-v0.1
-
-# Full PPL comparison (3-bit and 4-bit, all methods — ~2 hours)
-python3 benchmarks/bench_ppl_all_methods.py --model mistralai/Mistral-7B-v0.1
-
-# Batch decode scaling (compute-bound vs bandwidth-bound regimes)
 python3 benchmarks/bench_batch_decode_v2.py --model mistralai/Mistral-7B-v0.1
-
-# Regenerate all v2 figures from existing results/
-python3 report/generate_figures_v2.py
+python3 report/generate_figures_v2.py                                            # regenerate report figures
+bash run_all_benchmarks.sh mistralai/Mistral-7B-v0.1                             # full suite, 60-90 min
+python3 tools/readme_data.py && python3 ~/video-readme-maker/vrm.py all README.spec.yml   # this README and video
 ```
+HIP kernels: `cd kernels/hip && bash build_mi300x.sh` (build and run inside the ROCm 7.2 Primus container, see `docker_run_amd_mi300x.sh`).
+The complete previous README (benchmark catalogue, SWA mode, ABI notes, reading order) is kept in [docs/ORIGINAL_README.md](docs/ORIGINAL_README.md).
 
-**vLLM kv-heavy decode — repository closure (what we shipped vs what is deployment-only):** [`docs/repo_decode_bottleneck_closure.md`](docs/repo_decode_bottleneck_closure.md) · ops checklist [`docs/bottleneck_improvement_mi300.md`](docs/bottleneck_improvement_mi300.md) · evidence trail [`docs/decode_whole_step_amdahl_outcome.md`](docs/decode_whole_step_amdahl_outcome.md).
+<a id="caveats"></a>
 
-## Building HIP Kernels
+## ⚠️ Honest caveats
 
-The HIP kernels provide standalone `C` binaries for isolated throughput benchmarks.
-They cannot be loaded via ctypes in the same Python process as PyTorch (ROCm ABI
-mismatch — see [ABI note](#rocm-abi-note)).
+- **One GPU model, one model family.** Everything is MI300X (gfx942) with Mistral-7B-v0.1 shapes.
+- **NIAH is synthetic** (100% pass on every 3-bit method) and perplexity runs use small windows.
+- **Serving is one configuration** (1024 in / 256 out, 32 prompts). Flat end-to-end throughput does not mean KV compression is useless at larger batch or longer context.
+- **Fused-kernel gains depend on context length**: at 4K tokens and below the fused TQ3 kernel is slower than fp16 SDPA.
+- **HIP kernels cannot be loaded via ctypes in the PyTorch process** (ROCm code-object ABI mismatch); standalone binaries are used instead.
 
-```bash
-cd kernels/hip
-bash build_mi300x.sh          # build all (lib + test + bench)
-bash build_mi300x.sh lib       # shared library only
-bash build_mi300x.sh test      # validation suite
-bash build_mi300x.sh bench     # microbenchmark binary
+<a id="repo-map"></a>
 
-./tq_validate_mi300x           # must print "9/9 tests passed"
-./tq_bench_mi300x 4096 50      # throughput at N=4096 vectors, 50 iterations
-```
+## 🗺️ Repo map
 
-**Compiler**: `/opt/rocm/bin/hipcc` · **Target**: `gfx942:sramecc+:xnack-`
-
-## Full Benchmark Suite
-
-```bash
-bash run_all_benchmarks.sh mistralai/Mistral-7B-v0.1  # ~60–90 min
-```
-
-## Benchmark Catalogue
-
-| Script | What it measures |
+| Path | What it is |
 |---|---|
-| `bench_compress_decompress.py` | Compress/decompress GB/s for all methods at multiple N |
-| `bench_prefill.py` | Prefill tok/s (TTFT) per method per seq length |
-| `bench_ppl_all_methods.py` | WikiText-2 PPL at 3-bit and 4-bit (roundtrip mode) |
-| `bench_ppl_proper.py` | PPL via SDPA patching (alternative evaluation path) |
-| `bench_batch_decode_v2.py` | Batch decode tok/s vs batch size and seq length |
-| `bench_batch_decode.py` | Batch decode TQ3 speedup (bandwidth-bound regime) |
-| `bench_all_methods_decode.py` | End-to-end decode tok/s, all methods |
-| `bench_quality.py` | Cosine similarity and MSE across layers |
-| `bench_konly_ppl.py` | K-only vs K+V compression PPL tradeoff |
-| `bench_niah.py` | Needle-in-Haystack retrieval accuracy vs compression |
-| `bench_kernels.py` | TurboQuant Triton kernel throughput progression |
-| `bench_tq_attention.py` | TQ3 fused attention throughput vs FP16 SDPA |
-| `bench_triton_attention.py` | FP16 vs Python-TQ3 vs Triton-fused-TQ3 attention |
-| `bench_batch_attention.py` | SDPA at multiple batch sizes (TQ3 vs FP16) |
-| `bench_mfma_rotate.py` | MFMA rotation kernel vs torch.matmul |
-| `bench_runtime_ratio_all_methods.py` | Empirical compression ratio on live model KV cache |
-| `bench_large_models.py` | Mistral-70B / Llama-3-70B scaling (MI300X multi-GPU) |
-| `bench_flash_attn_check.py` | SDPA dispatch investigation, effective BW on ROCm |
-| `bench_vllm_serving.py` | vLLM end-to-end serving throughput (FP16 vs IsoQuant) |
-| `validate_triton_e2e.py` | Correctness + throughput: Triton TQ3 vs FP16 SDPA |
-| `profile_rocprof.py` | ROCm hardware counter collection |
+| `kernels/` | Triton kernels, HIP/C++ implementation, MFMA loaders, reference implementations |
+| `benchmarks/` | all benchmark scripts |
+| `baselines/` | FP16 / FP8 / INT4 end-to-end decode baselines |
+| `results/` | JSON outputs from all benchmark runs; results/derived is produced by tools/readme_data.py |
+| `report/` | final_report_v2.md, figures and the figure generator |
+| `docs/` | locked environment, closure analysis, previous README |
+| `tq_backends/` | drop-in TurboQuant / IsoQuant attention modules for vLLM |
+| `tools/readme_data.py` | derives README and video numbers from results/ |
+| `README.spec.yml` | spec for video-readme-maker |
+| `video/` | explainer mp4, srt, poster, preview gif (generated) |
 
-## ROCm / HIP ABI note
+---
 
-The **HIP runtime linked into the Python process** (via PyTorch) and a **system `hipcc`** build of standalone HIP may disagree on **code-object version** (COV5 vs COV6). Loading a mismatched `libturboquant_mi300x.so` via **ctypes** in the same process as PyTorch can fail with **HIP error 209** (`hipMemcpyToSymbol`, module load).
-
-**For Python use**: `kernels/turboquant_mi300x.py` provides an equivalent
-pure-PyTorch path; the rotation GEMM routes through
-`torch.matmul → rocBLAS → MFMA`.
-
-**For isolated C benchmarks**: build and run **`kernels/hip/`** binaries inside the **ROCm 7.2 Primus** workflow (`docker_run_amd_mi300x.sh`) so toolchain and runtime match.
-
-## Attention Implementation Note
-
-- `attn_implementation="sdpa"` — works up to 131K context (use this)
-- `attn_implementation="eager"` — OOM at seq ≥ 32K (quadratic activations: 137 GB)
-- `flash_attention_2` — requires `flash-attn` package (not installed on this system)
-
-## Sliding Window Attention (SWA) mode
-
-By default benchmarks store the full KV cache (`DynamicCache`), so the sliding-window mask only zeroes far-away contributions while memory traffic remains O(seq). To exercise an actually windowed cache, every model-loading and synthetic bench takes:
-
-- `--swa {on,off}` (default `off` — preserves prior behavior)
-- `--window N` (default `0`; with `--swa on` falls back to `model.config.sliding_window` for HF benches; required for synthetic benches that don't load a model)
-
-Helpers live in **`kernels/cache_utils.py`** (`truncate_kv_to_window`, `clamp_seq_to_window`, `resolve_swa_window`).
-
-Examples:
-
-```bash
-# HF baseline at long context, windowed cache (Mistral-7B reads window=4096 from config)
-python3 baselines/fp16_baseline.py --model mistralai/Mistral-7B-v0.1 --seq-lens 32768 --swa on
-
-# Synthetic decode bench, explicit window
-python3 benchmarks/bench_all_methods_decode.py --seq-lens 32768 --swa on --window 4096
-
-# Memory-only sanity: confirm cache shrinks
-python3 benchmarks/bench_measured_cache_memory.py --seq-len 32768 --swa off  # ~134 MB FP16
-python3 benchmarks/bench_measured_cache_memory.py --seq-len 32768 --swa on   # ~16 MB FP16
-```
-
-**vLLM benches:** the flag is recorded for provenance but the actual SWA path is owned by vLLM. On Mistral, vLLM upstream disables the custom paged-attention path whenever `sliding_window != 0`. To exercise the optimized path under SWA, apply the patch first:
-
-```bash
-"$REPO/.benchmark_mi300_vllm_frozen/.venv/bin/python" \
-    scripts/patch_vllm_rocm_sliding_window_custom_paged.py
-```
-
-Then run any `bench_vllm_*.py` with `--swa on --max-model-len 16384` (must exceed the window for SWA to fire).
-
-**NIAH under SWA:** `bench_niah.py --swa on` pushes the needle into the last `window − 256` tokens so the model can actually attend to it; without that adjustment, NIAH at ctx > window is broken by design.
-
-## One-command Showcase
-
-To run all screenshot-style experiments (measured compression grid + attention quality + latency table + roofline + KV memory charts) in one go:
-
-```bash
-cd amd-experiments
-./scripts/run_showcase.sh
-```
-
-Primary outputs:
-
-- `results/bench_compression_ratio_grid.json`
-- `results/bench_turboquant_showcase.json`
-- `report/figures_v2/fig27_tq_attention_quality_hist.png`
-- `report/figures_v2/fig28_mi300x_roofline_tq_attention.png`
-- `report/figures_v2/fig29_kv_cache_memory_curve.png`
-- `report/figures_v2/fig30_kv_component_breakdown.png`
-
-## Reading Order
-
-1. This `README.md` — layout and quick start
-2. **`docs/benchmark_mi300_locked_env.md`** — canonical MI300X + vLLM benchmark Python path and lock procedure
-3. `report/final_report_v2.md` — full four-method narrative with tables and figures
-4. `current.md` — detailed phase-by-phase status, blockers, findings
-5. `research.md` — TurboQuant algorithm deep-dive + MI300X porting notes
-6. `kernels/hip/turboquant_mi300x.h` — HIP kernel architecture and block format
-
-## Component READMEs
-
-- **`docs/benchmark_mi300_locked_env.md`** — canonical locked vLLM + torch benchmark environment
-- `benchmarks/README.md` — runnable benchmark entry points and quick commands
-- `baselines/README.md` — FP16/FP8/INT4 baseline commands
-- `scripts/README.md` — consolidation/showcase utility commands
-- `profiling/README.md` — profiling utility usage
-- `analysis/README.md` — plotting command reference
-- `report/README.md` — report figure generation commands
-- `kernels/README.md` — kernel component map and runnable HIP entry points
-- `report-ui/README.md` — run/build the interactive report UI and refresh its content assets
-- `kernels/hip/README.md` — build/test/benchmark HIP binaries on MI300X
-- `notebooks/README.md` — use the consolidation notebook or equivalent script commands
-- `docs/README.md` — consolidated documentation map and summary-generation workflow
-
-## External References
-
-- **TurboQuant** (Agarwal et al., Google 2024): [arXiv:2406.12820](https://arxiv.org/abs/2406.12820)
-- **RotorQuant** (Pope 2026 — Clifford Cl(3,0) rotors): [scrya.com/rotorquant](https://www.scrya.com/rotorquant/)
-- **RotorQuant repo** (IsoQuant / PlanarQuant / RotorQuant Triton kernels): [github.com/scrya-com/rotorquant](https://github.com/scrya-com/rotorquant)
-- **TurboQuant first implementation** (kernel taxonomy table): [github.com/DevTechJr/turboquant_cutile](https://github.com/DevTechJr/turboquant_cutile)
+<div align="center"><sub>Generated with video-readme-maker from README.spec.yml and results/.</sub></div>

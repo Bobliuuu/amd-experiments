@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 278" width="980" height="278" role="img" aria-label="vLLM Mistral-7B output throughput (tok/s)">
+<rect width="980" height="278" rx="16" fill="#0b0f17"/>
+<text x="32" y="44" font-family="ui-sans-serif,system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-weight="700" font-size="22" fill="#e6edf6">vLLM Mistral-7B output throughput (tok/s)</text>
+<text x="32" y="68" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="14" fill="#8a98ad">1024 in / 256 out, 32 prompts: fp16 vs TurboQuant decompress vs TurboQuant fused</text>
+<text x="207" y="118" text-anchor="end" font-family="ui-sans-serif,system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="15" fill="#8a98ad" font-weight="400">fp16</text>
+<rect x="221" y="96" width="606.6" height="30" rx="6" fill="#263044"/>
+<text x="837.6" y="117" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="15" font-weight="700" fill="#e6edf6">2,425</text>
+<text x="207" y="164" text-anchor="end" font-family="ui-sans-serif,system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="15" fill="#8a98ad" font-weight="400">turboquant_decompress</text>
+<rect x="221" y="142" width="609.0" height="30" rx="6" fill="#263044"/>
+<text x="840.0" y="163" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="15" font-weight="700" fill="#e6edf6">2,435</text>
+<text x="207" y="210" text-anchor="end" font-family="ui-sans-serif,system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="15" fill="#8a98ad" font-weight="400">turboquant_fused</text>
+<rect x="221" y="188" width="607.5" height="30" rx="6" fill="#263044"/>
+<text x="838.5" y="209" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="15" font-weight="700" fill="#e6edf6">2,429</text>
+<text x="948" y="264" text-anchor="end" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="12" fill="#8a98ad">source: results/derived/readme_data.json · higher is better</text>
+</svg>
